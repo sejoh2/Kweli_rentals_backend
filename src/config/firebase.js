@@ -2,31 +2,26 @@ const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK using environment variables
 if (!admin.apps.length) {
-  // Check if we have the service account JSON in env
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // Parse from environment variable
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  
+  if (!serviceAccountJson) {
+    console.error('❌ FIREBASE_SERVICE_ACCOUNT not found in environment variables!');
+    console.error('Please add FIREBASE_SERVICE_ACCOUNT to your .env file');
+    process.exit(1);
+  }
+  
+  try {
+    const serviceAccount = JSON.parse(serviceAccountJson);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
-  } 
-  // Fallback to file for local development
-  else {
-    try {
-      const serviceAccount = require('../../firebase-service-account.json');
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-    } catch (error) {
-      console.error('❌ Firebase service account not found!');
-      console.error('Please set FIREBASE_SERVICE_ACCOUNT environment variable or add firebase-service-account.json file');
-      process.exit(1);
-    }
+    console.log('✅ Firebase Admin SDK initialized from environment variables');
+  } catch (error) {
+    console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT:', error.message);
+    process.exit(1);
   }
-  console.log('✅ Firebase Admin SDK initialized');
 }
 
-// Rest of the file remains the same...
 const verifyFirebaseToken = async (idToken) => {
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
