@@ -29,7 +29,7 @@ async function initTables() {
         phone_number VARCHAR(20),
         location TEXT,
         profile_image_url TEXT,
-        role VARCHAR(50) DEFAULT 'home_finder' CHECK (role IN ('home_finder', 'landlord', 'agent', 'movers')),
+        role VARCHAR(50) DEFAULT 'home_finder' CHECK (role IN ('home_finder', 'landlord', 'agent', 'movers', 'admin')),
         is_active BOOLEAN DEFAULT true,
         email_verified BOOLEAN DEFAULT false,
         auth_provider VARCHAR(50) DEFAULT 'email' CHECK (auth_provider IN ('email', 'google', 'apple')),
@@ -127,6 +127,29 @@ async function initTables() {
         EXECUTE FUNCTION update_updated_at_column();
     `);
     console.log(`${colors.green}✅ Created auto-update triggers${colors.reset}`);
+
+    // Create trigger to auto-verify admin users when role changes to admin
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION auto_verify_admin()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        -- If the role is being changed to 'admin'
+        IF NEW.role = 'admin' AND OLD.role != 'admin' THEN
+          NEW.is_verified := true;
+          NEW.verification_status := 'verified';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      
+      DROP TRIGGER IF EXISTS trigger_auto_verify_admin ON users;
+      
+      CREATE TRIGGER trigger_auto_verify_admin
+        BEFORE UPDATE OF role ON users
+        FOR EACH ROW
+        EXECUTE FUNCTION auto_verify_admin();
+    `);
+    console.log(`${colors.green}✅ Created auto-verify admin trigger${colors.reset}`);
 
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
     console.log(`${colors.green}✅ ALL TABLES CREATED SUCCESSFULLY!${colors.reset}`);

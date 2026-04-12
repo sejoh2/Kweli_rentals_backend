@@ -82,4 +82,9 @@ const optionalAuth = async (req, res, next) => {
   }
 };
 
-module.exports = { authenticate, requireRole, optionalAuth };
+// Check if user is admin (helper)
+const isAdmin = (req) => {
+  return req.user && req.user.role === 'admin';
+};
+
+module.exports = { authenticate, requireRole, optionalAuth, isAdmin };

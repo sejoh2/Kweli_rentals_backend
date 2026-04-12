@@ -106,7 +106,9 @@ const signIn = async (req, res) => {
         profile_image_url: dbUser.profile_image_url,
         location: dbUser.location,
         total_listings: dbUser.total_listings,
-        email_verified: dbUser.email_verified
+        email_verified: dbUser.email_verified,
+        is_verified: dbUser.is_verified,
+        verification_status: dbUser.verification_status
       },
       token: firebaseUser.idToken,
       refreshToken: firebaseUser.refreshToken
@@ -157,6 +159,38 @@ const getCurrentUser = async (req, res) => {
   }
 };
 
+// Get public user profile by UID
+const getPublicUserProfile = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    
+    const user = await userService.getUserByFirebaseUid(uid);
+    
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Return only public information
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        profile_image_url: user.profile_image_url,
+        location: user.location,
+        role: user.role,
+        rating: user.rating,
+        total_listings: user.total_listings,
+        is_verified: user.is_verified,
+        joined_at: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error("Error getting public profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Update user profile
 const updateUserProfile = async (req, res) => {
   try {
@@ -181,13 +215,17 @@ const updateUserProfile = async (req, res) => {
   }
 };
 
-// Update user role
+// Update user role (Admin only)
 const updateUserRole = async (req, res) => {
   try {
-    const { role } = req.body;
-    const firebaseUid = req.user.firebase_uid;
+    const { role, userId } = req.body;
     
-    const updatedUser = await userService.updateUserRole(firebaseUid, role);
+    // Only admins can change roles
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can update user roles" });
+    }
+    
+    const updatedUser = await userService.updateUserRole(userId, role);
     
     res.json({
       success: true,
@@ -196,6 +234,154 @@ const updateUserRole = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating user role:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Submit verification request (Landlord only)
+const submitVerification = async (req, res) => {
+  try {
+    const firebaseUid = req.user.firebase_uid;
+    const { documents } = req.body; // You can add document URLs here
+    
+    // Only landlords can request verification
+    if (req.user.role !== 'landlord') {
+      return res.status(403).json({ error: "Only landlords can request verification" });
+    }
+    
+    // Check if already verified
+    if (req.user.is_verified) {
+      return res.status(400).json({ error: "User is already verified" });
+    }
+    
+    // Update status to 'in_progress'
+    const updated = await userService.updateVerificationStatus(firebaseUid, 'in_progress');
+    
+    res.json({
+      success: true,
+      message: "Verification request submitted successfully. Awaiting admin approval.",
+      verification_status: updated.verification_status,
+      is_verified: updated.is_verified
+    });
+  } catch (error) {
+    console.error("Error submitting verification:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Approve verification (Admin only)
+const approveVerification = async (req, res) => {
+  try {
+    const { userId } = req.params; // This is the user's firebase_uid
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can approve verification" });
+    }
+    
+    // Get the user to verify
+    const userToVerify = await userService.getUserByFirebaseUid(userId);
+    
+    if (!userToVerify) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Check if user is landlord
+    if (userToVerify.role !== 'landlord') {
+      return res.status(400).json({ error: "Verification can only be approved for landlords" });
+    }
+    
+    // Check if already verified
+    if (userToVerify.is_verified) {
+      return res.status(400).json({ error: "User is already verified" });
+    }
+    
+    // Update status to 'verified'
+    const updated = await userService.updateVerificationStatus(userId, 'verified');
+    
+    res.json({
+      success: true,
+      message: `User ${userToVerify.full_name} has been verified successfully`,
+      user: {
+        id: userToVerify.id,
+        full_name: userToVerify.full_name,
+        email: userToVerify.email,
+        is_verified: updated.is_verified,
+        verification_status: updated.verification_status
+      }
+    });
+  } catch (error) {
+    console.error("Error approving verification:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Reject verification (Admin only)
+const rejectVerification = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { reason } = req.body;
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can reject verification" });
+    }
+    
+    // Get the user
+    const userToReject = await userService.getUserByFirebaseUid(userId);
+    
+    if (!userToReject) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Reset status to 'not_verified'
+    const updated = await userService.updateVerificationStatus(userId, 'not_verified');
+    
+    res.json({
+      success: true,
+      message: `Verification rejected for ${userToReject.full_name}${reason ? `: ${reason}` : ''}`,
+      user: {
+        id: userToReject.id,
+        full_name: userToReject.full_name,
+        email: userToReject.email,
+        is_verified: updated.is_verified,
+        verification_status: updated.verification_status
+      }
+    });
+  } catch (error) {
+    console.error("Error rejecting verification:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get all pending verification requests (Admin only)
+const getPendingVerifications = async (req, res) => {
+  try {
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can view pending verifications" });
+    }
+    
+    const pool = require("../config/db");
+    const result = await pool.query(
+      `
+      SELECT id, firebase_uid, email, full_name, phone_number, 
+             profile_image_url, created_at, updated_at
+      FROM users 
+      WHERE role = 'landlord' 
+        AND verification_status = 'in_progress'
+        AND is_verified = false
+      ORDER BY updated_at ASC
+      `
+    );
+    
+    res.json({
+      success: true,
+      count: result.rows.length,
+      pending_verifications: result.rows
+    });
+  } catch (error) {
+    console.error("Error getting pending verifications:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -212,25 +398,6 @@ const updateListingsCount = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating listings count:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Update verification status
-const updateVerification = async (req, res) => {
-  try {
-    const { status } = req.body;
-    const firebaseUid = req.user.firebase_uid;
-    
-    const updated = await userService.updateVerificationStatus(firebaseUid, status);
-    
-    res.json({
-      success: true,
-      verification_status: updated.verification_status,
-      is_verified: updated.is_verified
-    });
-  } catch (error) {
-    console.error("Error updating verification status:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -252,9 +419,14 @@ const logout = async (req, res) => {
   }
 };
 
-// Get all users
+// Get all users (Admin only)
 const getAllUsers = async (req, res) => {
   try {
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can view all users" });
+    }
+    
     const { limit = 50, offset = 0 } = req.query;
     const users = await userService.getAllUsers(parseInt(limit), parseInt(offset));
     
@@ -269,10 +441,16 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// Deactivate user
+// Deactivate user (Admin only)
 const deactivateUser = async (req, res) => {
   try {
     const { firebaseUid } = req.params;
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can deactivate users" });
+    }
+    
     const deactivatedUser = await userService.deactivateUser(firebaseUid);
     
     if (!deactivatedUser) {
@@ -295,10 +473,14 @@ module.exports = {
   signIn,
   refreshToken,
   getCurrentUser,
+  getPublicUserProfile,
   updateUserProfile,
   updateUserRole,
+  submitVerification,
+  approveVerification,
+  rejectVerification,
+  getPendingVerifications,
   updateListingsCount,
-  updateVerification,
   logout,
   getAllUsers,
   deactivateUser
