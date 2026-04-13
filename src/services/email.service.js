@@ -5,25 +5,49 @@ const verificationCodes = new Map();
 const passwordResetCodes = new Map();
 
 // Create a SINGLE transporter instance (not created per email)
-// The key fix is "family: 4" - this forces IPv4 and fixes ENETUNREACH
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.EMAIL_PORT) || 587,  // Use 587, not 465
-  secure: false, // false for 587 (STARTTLS), true for 465 (SSL)
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // MUST be 16-character App Password, NO SPACES
-  },
-  family: 4, // CRITICAL: Forces IPv4, fixes ENETUNREACH error on Render
-  connectionTimeout: 30000,
-  greetingTimeout: 30000,
-  socketTimeout: 30000,
-});
+// Prefer SendGrid (works on Render). Fallback to SMTP (Gmail) if no API key.
+let transporter;
+if (process.env.SENDGRID_API_KEY) {
+  console.log('📧 [EMAIL] Using SendGrid SMTP (smtp.sendgrid.net)');
+  transporter = nodemailer.createTransport({
+    host: 'smtp.sendgrid.net',
+    port: 587,
+    secure: false,
+    auth: {
+      user: 'apikey',
+      pass: process.env.SENDGRID_API_KEY,
+    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
+  });
+} else {
+  const port = parseInt(process.env.EMAIL_PORT, 10) || 587;
+  const secure = port === 465;
+  const pass = process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : undefined;
 
-// Verify connection on startup (optional but helpful)
+  transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: port,
+    secure: secure, // true for 465, false for 587
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: pass, // trim spaces if any
+    },
+    family: 4, // force IPv4
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
+  });
+}
+
+// Verify connection on startup (helpful during deployment)
 transporter.verify((error, success) => {
   if (error) {
-    console.error('❌ [EMAIL] SMTP connection failed:', error.message);
+    console.error('❌ [EMAIL] SMTP connection failed:');
+    console.error('   message:', error.message);
+    console.error('   code:', error.code);
+    console.error('   stack:', error.stack);
   } else {
     console.log('✅ [EMAIL] SMTP connection ready');
   }
