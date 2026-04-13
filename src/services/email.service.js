@@ -23,9 +23,9 @@ const createTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    tls: {
-      rejectUnauthorized: false, // Allow self-signed certificates
-    },
+    // tls: {
+    //   rejectUnauthorized: false, // Allow self-signed certificates
+    // },
     connectionTimeout: 10000,
     greetingTimeout: 5000,
     debug: true, // Enable debug output
