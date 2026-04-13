@@ -5,9 +5,27 @@ const jwt = require('jsonwebtoken');
 const verificationCodes = new Map();
 const passwordResetCodes = new Map();
 
-// Create transporter with production-ready TLS settings
+// Create transporter - supports SendGrid or Gmail
 const createTransporter = () => {
-  console.log('📧 [EMAIL] Creating email transporter...');
+  // Try SendGrid first (better for Render)
+  if (process.env.SENDGRID_API_KEY) {
+    console.log('📧 [EMAIL] Creating SendGrid transporter...');
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.sendgrid.net',
+      port: 587,
+      secure: false,
+      auth: {
+        user: 'apikey',
+        pass: process.env.SENDGRID_API_KEY,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 5000,
+    });
+    return transporter;
+  }
+  
+  // Fallback to Gmail with SSL (port 465)
+  console.log('📧 [EMAIL] Creating Gmail transporter...');
   console.log(`   Host: ${process.env.EMAIL_HOST}`);
   console.log(`   Port: ${process.env.EMAIL_PORT}`);
   console.log(`   User: ${process.env.EMAIL_USER}`);
@@ -16,19 +34,15 @@ const createTransporter = () => {
   
   const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
-    port: parseInt(process.env.EMAIL_PORT) || 587,
-    secure: false, // false for 587, true for 465
-    family: 4, 
+    port: parseInt(process.env.EMAIL_PORT) || 465,
+    secure: true, // true for 465 (SSL)
+    family: 4,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    // tls: {
-    //   rejectUnauthorized: false, // Allow self-signed certificates
-    // },
     connectionTimeout: 10000,
     greetingTimeout: 5000,
-    debug: true, // Enable debug output
   });
   
   return transporter;
