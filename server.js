@@ -24,8 +24,7 @@ async function start() {
     await initTables();
 
     // Start server
-    // Fixed code (CORRECT for Railway):
-app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, () => {
       console.log(`${colors.green}✅ Server is running!${colors.reset}`);
       console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       console.log(`${colors.blue}🌐 Server URL:${colors.reset} http://localhost:${PORT}`);
