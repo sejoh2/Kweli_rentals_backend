@@ -8,35 +8,80 @@ exports.uploadMiddleware = upload.array("media", 10);
 // Create a new property (authenticated)
 exports.createProperty = async (req, res) => {
   try {
+    console.log("Starting property creation...");
+    
     // Get owner_id from authenticated user
     const owner_id = req.user.firebase_uid;
+    console.log("Owner ID:", owner_id);
     
-    const files = req.files;
+    const files = req.files || [];
     let mediaUrls = [];
+
+    console.log("Number of files:", files.length);
 
     // Upload media files if provided
     if (files && files.length > 0) {
       for (const file of files) {
+        console.log("Uploading file:", file.originalname);
         const url = await mediaService.uploadMedia(file);
         mediaUrls.push(url);
       }
     }
 
-    const amenities = JSON.parse(req.body.amenities || "[]");
+    // Parse amenities
+    let amenities = [];
+    if (req.body.amenities) {
+      try {
+        amenities = typeof req.body.amenities === 'string' 
+          ? JSON.parse(req.body.amenities) 
+          : req.body.amenities;
+      } catch (e) {
+        amenities = req.body.amenities.split(',').map(a => a.trim());
+      }
+    }
+
+    // Parse furnished
+    let furnished = false;
+    if (req.body.furnished) {
+      furnished = req.body.furnished === 'true' || req.body.furnished === true;
+    }
+
+    // Parse numeric fields
+    const monthly_rent = parseFloat(req.body.monthly_rent);
+    const security_deposit = req.body.security_deposit ? parseFloat(req.body.security_deposit) : null;
+    const bedrooms = req.body.bedrooms ? parseInt(req.body.bedrooms) : null;
+    const bathrooms = req.body.bathrooms ? parseFloat(req.body.bathrooms) : null;
+    const size_sqm = req.body.size_sqm ? parseFloat(req.body.size_sqm) : null;
+
+    // Validate required fields
+    if (!req.body.title) {
+      return res.status(400).json({ error: "Title is required" });
+    }
+    if (!req.body.property_type) {
+      return res.status(400).json({ error: "Property type is required" });
+    }
+    if (!req.body.location_text) {
+      return res.status(400).json({ error: "Location is required" });
+    }
+    if (!monthly_rent || isNaN(monthly_rent)) {
+      return res.status(400).json({ error: "Valid monthly rent is required" });
+    }
 
     const property = {
       owner_id: owner_id,
-      title: req.body.title,
-      description: req.body.description,
+      title: req.body.title.trim(),
+      description: req.body.description || null,
       property_type: req.body.property_type,
       location_text: req.body.location_text,
-      monthly_rent: req.body.monthly_rent,
-      security_deposit: req.body.security_deposit,
-      bedrooms: req.body.bedrooms,
-      bathrooms: req.body.bathrooms,
-      size_sqm: req.body.size_sqm,
-      furnished: req.body.furnished === 'true' || req.body.furnished === true,
+      monthly_rent: monthly_rent,
+      security_deposit: security_deposit,
+      bedrooms: bedrooms,
+      bathrooms: bathrooms,
+      size_sqm: size_sqm,
+      furnished: furnished,
     };
+
+    console.log("Creating property with data:", property);
 
     const id = await propertyService.createProperty(property, mediaUrls, amenities);
 
@@ -53,7 +98,7 @@ exports.createProperty = async (req, res) => {
   }
 };
 
-// Get all properties (public)
+// Rest of your controller functions remain the same...
 exports.getAllProperties = async (req, res) => {
   try {
     const pool = require("../config/db");
@@ -96,7 +141,6 @@ exports.getAllProperties = async (req, res) => {
   }
 };
 
-// Get properties by owner ID (public)
 exports.getPropertiesByOwnerId = async (req, res) => {
   try {
     const { ownerId } = req.params;
@@ -141,7 +185,6 @@ exports.getPropertiesByOwnerId = async (req, res) => {
   }
 };
 
-// Get my properties (authenticated user's own properties)
 exports.getMyProperties = async (req, res) => {
   try {
     const owner_id = req.user.firebase_uid;
@@ -180,7 +223,6 @@ exports.getMyProperties = async (req, res) => {
   }
 };
 
-// Get single property by ID (public)
 exports.getPropertyById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -230,7 +272,6 @@ exports.getPropertyById = async (req, res) => {
   }
 };
 
-// Update property (authenticated owner only)
 exports.updateProperty = async (req, res) => {
   try {
     const { id } = req.params;
@@ -238,7 +279,6 @@ exports.updateProperty = async (req, res) => {
     const updates = req.body;
     const pool = require("../config/db");
     
-    // First check if property exists and belongs to user
     const checkResult = await pool.query(
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
@@ -248,7 +288,6 @@ exports.updateProperty = async (req, res) => {
       return res.status(404).json({ error: "Property not found or you don't have permission" });
     }
     
-    // Build dynamic update query
     const allowedUpdates = ['title', 'description', 'property_type', 'location_text', 
                            'monthly_rent', 'security_deposit', 'bedrooms', 'bathrooms', 
                            'size_sqm', 'furnished'];
@@ -289,7 +328,6 @@ exports.updateProperty = async (req, res) => {
   }
 };
 
-// Update property status (authenticated owner only)
 exports.updatePropertyStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -297,7 +335,6 @@ exports.updatePropertyStatus = async (req, res) => {
     const owner_id = req.user.firebase_uid;
     const pool = require("../config/db");
 
-    // Validate status
     const validStatuses = ['active', 'pending', 'occupied'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ 
@@ -305,7 +342,6 @@ exports.updatePropertyStatus = async (req, res) => {
       });
     }
 
-    // Check if property exists and belongs to user
     const checkResult = await pool.query(
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
@@ -334,14 +370,12 @@ exports.updatePropertyStatus = async (req, res) => {
   }
 };
 
-// Delete property (authenticated owner only)
 exports.deleteProperty = async (req, res) => {
   try {
     const { id } = req.params;
     const owner_id = req.user.firebase_uid;
     const pool = require("../config/db");
     
-    // Check if property exists and belongs to user
     const checkResult = await pool.query(
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
@@ -351,10 +385,8 @@ exports.deleteProperty = async (req, res) => {
       return res.status(404).json({ error: "Property not found or you don't have permission" });
     }
     
-    // Delete property (cascade will delete media and amenities)
     await pool.query(`DELETE FROM properties WHERE id = $1`, [id]);
     
-    // Update landlord's total listings count
     const userService = require("../services/user.service");
     await userService.updateLandlordListingsCount(owner_id);
     
@@ -368,13 +400,11 @@ exports.deleteProperty = async (req, res) => {
   }
 };
 
-// Like/Unlike property
 exports.toggleLike = async (req, res) => {
   try {
     const { id } = req.params;
     const pool = require("../config/db");
     
-    // Increment or decrement likes
     const result = await pool.query(
       `UPDATE properties 
        SET likes = likes + 1 
@@ -397,7 +427,6 @@ exports.toggleLike = async (req, res) => {
   }
 };
 
-// Search properties
 exports.searchProperties = async (req, res) => {
   try {
     const { query, minPrice, maxPrice, bedrooms, property_type, location } = req.query;
@@ -442,19 +471,19 @@ exports.searchProperties = async (req, res) => {
     
     if (minPrice) {
       sqlQuery += ` AND p.monthly_rent >= $${paramIndex}`;
-      values.push(minPrice);
+      values.push(parseFloat(minPrice));
       paramIndex++;
     }
     
     if (maxPrice) {
       sqlQuery += ` AND p.monthly_rent <= $${paramIndex}`;
-      values.push(maxPrice);
+      values.push(parseFloat(maxPrice));
       paramIndex++;
     }
     
     if (bedrooms) {
       sqlQuery += ` AND p.bedrooms = $${paramIndex}`;
-      values.push(bedrooms);
+      values.push(parseInt(bedrooms));
       paramIndex++;
     }
     

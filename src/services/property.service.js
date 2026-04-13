@@ -86,7 +86,7 @@ async function createProperty(property, mediaUrls, amenities) {
     await client.query("ROLLBACK");
     throw error;
   } finally {
-    client.release();
+    client.release(); // Always release the client back to the pool
   }
 }
 

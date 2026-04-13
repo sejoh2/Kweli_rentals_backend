@@ -6,10 +6,14 @@ const { authenticate, requireRole } = require("../middleware/auth");
 // ==================== PUBLIC ROUTES ====================
 router.post("/signup", authController.signUp);
 router.post("/signin", authController.signIn);
+router.post("/resend-verification", authController.resendVerificationCode);
+router.post("/verify-email", authController.verifyEmailCode);
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/reset-password", authController.resetPassword);
 router.post("/refresh-token", authController.refreshToken);
 router.get("/profile/:uid", authController.getPublicUserProfile);
 
-// ==================== PROTECTED ROUTES (Any authenticated user) ====================
+// ==================== PROTECTED ROUTES (Require verified email) ====================
 router.get("/me", authenticate, authController.getCurrentUser);
 router.put("/profile", authenticate, authController.updateUserProfile);
 router.post("/logout", authenticate, authController.logout);

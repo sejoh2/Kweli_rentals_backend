@@ -1,44 +1,65 @@
 const userService = require("../services/user.service");
+const emailService = require("../services/email.service");
 const { admin, signUpWithEmailPassword, signInWithEmailPassword, refreshFirebaseToken } = require("../config/firebase");
 
-// Sign Up with Email and Password
+// Sign Up with Email and Password (NO TOKEN ISSUED)
 const signUp = async (req, res) => {
   try {
     const { email, password, full_name, phone_number, role = 'home_finder' } = req.body;
     
-    // Validate input
     if (!email || !password) {
-      return res.status(400).json({ 
-        error: "Email and password are required" 
-      });
+      return res.status(400).json({ error: "Email and password are required" });
     }
     
     if (password.length < 6) {
-      return res.status(400).json({ 
-        error: "Password must be at least 6 characters" 
-      });
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    
+    // Check if user already exists in database
+    const existingUser = await userService.getUserByEmail(email);
+    if (existingUser) {
+      if (!existingUser.email_verified) {
+        // User exists but not verified - send new code
+        await emailService.sendVerificationCode(email, existingUser.full_name);
+        return res.status(200).json({
+          success: true,
+          message: "Account exists but not verified. A new verification code has been sent to your email.",
+          requires_verification: true,
+          email: email
+        });
+      } else {
+        return res.status(400).json({ error: "Email already registered. Please sign in." });
+      }
     }
     
     // Create user in Firebase Auth
     const firebaseUser = await signUpWithEmailPassword(email, password, full_name);
     
-    // Create user in our database
+    // Create user in our database (email not verified yet)
     const userData = {
       uid: firebaseUser.localId,
       email: firebaseUser.email,
       full_name: full_name || email.split('@')[0],
       phone_number: phone_number || null,
       role: role,
-      email_verified: firebaseUser.emailVerified || false,
+      email_verified: false,
       auth_provider: 'email'
     };
     
-    // Save to PostgreSQL
     const dbUser = await userService.createOrUpdateUserFromSignup(userData);
+    
+    // Send verification code email
+    const emailResult = await emailService.sendVerificationCode(email, full_name || email.split('@')[0]);
+    
+    if (!emailResult.success) {
+      return res.status(500).json({ error: "Failed to send verification email" });
+    }
     
     res.status(201).json({
       success: true,
-      message: "User registered successfully",
+      message: "User registered successfully. A verification code has been sent to your email.",
+      requires_verification: true,
+      email: email,
       user: {
         id: dbUser.id,
         email: dbUser.email,
@@ -46,69 +67,67 @@ const signUp = async (req, res) => {
         phone_number: dbUser.phone_number,
         role: dbUser.role,
         profile_image_url: dbUser.profile_image_url,
-        email_verified: dbUser.email_verified
-      },
-      token: firebaseUser.idToken,
-      refreshToken: firebaseUser.refreshToken
+        email_verified: false
+      }
     });
     
   } catch (error) {
     console.error("Sign up error:", error.message);
-    res.status(400).json({ 
-      error: error.message || "Failed to create user account" 
-    });
+    res.status(400).json({ error: error.message || "Failed to create user account" });
   }
 };
 
-// Sign In with Email and Password
+// Sign In with Email and Password (BLOCK if email not verified)
 const signIn = async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // Validate input
     if (!email || !password) {
-      return res.status(400).json({ 
-        error: "Email and password are required" 
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+    
+    // Get user from database first
+    const dbUser = await userService.getUserByEmail(email);
+    
+    if (!dbUser) {
+      return res.status(401).json({ error: "User not found. Please register first." });
+    }
+    
+    // CHECK IF EMAIL IS VERIFIED
+    if (!dbUser.email_verified) {
+      // Send a new verification code
+      await emailService.sendVerificationCode(email, dbUser.full_name);
+      return res.status(403).json({ 
+        error: "Email not verified. A new verification code has been sent to your email.",
+        requires_verification: true,
+        email: dbUser.email
       });
     }
     
     // Sign in with Firebase Auth REST API
     const firebaseUser = await signInWithEmailPassword(email, password);
     
-    // Get or create user in database
-    let dbUser = await userService.getUserByFirebaseUid(firebaseUser.localId);
+    // Update last login
+    await userService.updateLastLogin(firebaseUser.localId);
     
-    if (!dbUser) {
-      // Create user record if doesn't exist
-      const userData = {
-        uid: firebaseUser.localId,
-        email: firebaseUser.email,
-        full_name: firebaseUser.displayName || email.split('@')[0],
-        role: 'home_finder',
-        email_verified: firebaseUser.emailVerified || false,
-        auth_provider: 'email'
-      };
-      dbUser = await userService.createOrUpdateUserFromSignup(userData);
-    } else {
-      // Update last login
-      await userService.updateLastLogin(firebaseUser.localId);
-    }
+    // Get fresh user data
+    const verifiedUser = await userService.getUserByFirebaseUid(firebaseUser.localId);
     
     res.json({
       success: true,
       message: "Signed in successfully",
       user: {
-        id: dbUser.id,
-        email: dbUser.email,
-        full_name: dbUser.full_name,
-        phone_number: dbUser.phone_number,
-        role: dbUser.role,
-        profile_image_url: dbUser.profile_image_url,
-        location: dbUser.location,
-        total_listings: dbUser.total_listings,
-        email_verified: dbUser.email_verified,
-        is_verified: dbUser.is_verified,
-        verification_status: dbUser.verification_status
+        id: verifiedUser.id,
+        email: verifiedUser.email,
+        full_name: verifiedUser.full_name,
+        phone_number: verifiedUser.phone_number,
+        role: verifiedUser.role,
+        profile_image_url: verifiedUser.profile_image_url,
+        location: verifiedUser.location,
+        total_listings: verifiedUser.total_listings,
+        email_verified: verifiedUser.email_verified,
+        is_verified: verifiedUser.is_verified,
+        verification_status: verifiedUser.verification_status
       },
       token: firebaseUser.idToken,
       refreshToken: firebaseUser.refreshToken
@@ -116,9 +135,160 @@ const signIn = async (req, res) => {
     
   } catch (error) {
     console.error("Sign in error:", error.message);
-    res.status(401).json({ 
-      error: "Invalid email or password" 
+    res.status(401).json({ error: "Invalid email or password" });
+  }
+};
+
+// Resend verification code
+const resendVerificationCode = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    
+    const user = await userService.getUserByEmail(email);
+    if (!user) {
+      return res.status(404).json({ error: "User not found. Please sign up first." });
+    }
+    
+    if (user.email_verified) {
+      return res.status(400).json({ error: "Email already verified. Please sign in." });
+    }
+    
+    const result = await emailService.sendVerificationCode(email, user.full_name);
+    
+    if (result.success) {
+      res.json({ 
+        success: true, 
+        message: "Verification code sent successfully",
+        email: email
+      });
+    } else {
+      res.status(500).json({ error: "Failed to send verification code" });
+    }
+  } catch (error) {
+    console.error("Error resending verification code:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Verify email code - AUTO AUTHENTICATE AND ISSUE TOKEN
+// Verify email code - MANUAL SIGN-IN (Recommended)
+const verifyEmailCode = async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    
+    if (!email || !code) {
+      return res.status(400).json({ error: "Email and verification code are required" });
+    }
+    
+    // Verify the code
+    const verificationResult = emailService.verifyCode(email, code);
+    
+    if (!verificationResult.success) {
+      return res.status(400).json({ error: verificationResult.error });
+    }
+    
+    // Get user from database
+    const user = await userService.getUserByEmail(email);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Update email_verified to true
+    let updatedUser = await userService.verifyUserEmail(email);
+    
+    // For home_finder role, also set is_verified and verification_status to verified
+    if (updatedUser.role === 'home_finder') {
+      await userService.updateVerificationStatus(updatedUser.firebase_uid, 'verified');
+      updatedUser = await userService.getUserByEmail(email);
+    }
+    
+    // Send welcome email
+    await emailService.sendWelcomeEmail(email, updatedUser.full_name);
+    
+    // Return success - user must sign in manually
+    res.json({
+      success: true,
+      message: "Email verified successfully! You can now sign in.",
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        full_name: updatedUser.full_name,
+        phone_number: updatedUser.phone_number,
+        role: updatedUser.role,
+        profile_image_url: updatedUser.profile_image_url,
+        location: updatedUser.location,
+        total_listings: updatedUser.total_listings,
+        email_verified: updatedUser.email_verified,
+        is_verified: updatedUser.is_verified,
+        verification_status: updatedUser.verification_status
+      }
     });
+  } catch (error) {
+    console.error("Error verifying code:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Request password reset code
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    const user = await userService.getUserByEmail(email);
+    if (!user) {
+      return res.json({
+        success: true,
+        message: "If your email is registered, you will receive a password reset code",
+      });
+    }
+    
+    await emailService.sendPasswordResetCode(email, user.full_name);
+    
+    res.json({
+      success: true,
+      message: "If your email is registered, you will receive a password reset code",
+    });
+  } catch (error) {
+    console.error("Error sending password reset code:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Reset password with code
+const resetPassword = async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+    
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ error: "Email, code, and new password are required" });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    
+    // Verify the reset code
+    const verificationResult = emailService.verifyPasswordResetCode(email, code);
+    
+    if (!verificationResult.success) {
+      return res.status(400).json({ error: verificationResult.error });
+    }
+    
+    // Update password in Firebase
+    const user = await admin.auth().getUserByEmail(email);
+    await admin.auth().updateUser(user.uid, { password: newPassword });
+    
+    res.json({ 
+      success: true, 
+      message: "Password reset successfully. You can now sign in with your new password." 
+    });
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -149,10 +319,13 @@ const refreshToken = async (req, res) => {
 // Get current user profile
 const getCurrentUser = async (req, res) => {
   try {
-    res.json({
-      success: true,
-      user: req.user
-    });
+    if (!req.user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first.",
+        requires_verification: true
+      });
+    }
+    res.json({ success: true, user: req.user });
   } catch (error) {
     console.error("Error getting current user:", error);
     res.status(500).json({ error: error.message });
@@ -163,14 +336,12 @@ const getCurrentUser = async (req, res) => {
 const getPublicUserProfile = async (req, res) => {
   try {
     const { uid } = req.params;
-    
     const user = await userService.getUserByFirebaseUid(uid);
     
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Return only public information
     res.json({
       success: true,
       user: {
@@ -194,6 +365,13 @@ const getPublicUserProfile = async (req, res) => {
 // Update user profile
 const updateUserProfile = async (req, res) => {
   try {
+    if (!req.user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first.",
+        requires_verification: true
+      });
+    }
+    
     const { full_name, phone_number, location, profile_image_url } = req.body;
     const firebaseUid = req.user.firebase_uid;
     
@@ -220,17 +398,23 @@ const updateUserRole = async (req, res) => {
   try {
     const { role, userId } = req.body;
     
-    // Only admins can change roles
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can update user roles" });
     }
     
     const updatedUser = await userService.updateUserRole(userId, role);
     
+    // If promoting to admin, also verify them
+    if (role === 'admin' && !updatedUser.is_verified) {
+      await userService.syncAdminVerification(updatedUser.firebase_uid);
+    }
+    
+    const finalUser = await userService.getUserByFirebaseUid(userId);
+    
     res.json({
       success: true,
       message: `Role updated to ${role}`,
-      user: updatedUser
+      user: finalUser
     });
   } catch (error) {
     console.error("Error updating user role:", error);
@@ -238,23 +422,27 @@ const updateUserRole = async (req, res) => {
   }
 };
 
-// Submit verification request (Landlord only)
+// Submit verification request (Landlord/Agent/Movers only)
 const submitVerification = async (req, res) => {
   try {
-    const firebaseUid = req.user.firebase_uid;
-    const { documents } = req.body; // You can add document URLs here
-    
-    // Only landlords can request verification
-    if (req.user.role !== 'landlord') {
-      return res.status(403).json({ error: "Only landlords can request verification" });
+    if (!req.user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first.",
+        requires_verification: true
+      });
     }
     
-    // Check if already verified
+    const firebaseUid = req.user.firebase_uid;
+    const allowedRoles = ['landlord', 'agent', 'movers'];
+    
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Only landlords, agents, and movers can request verification" });
+    }
+    
     if (req.user.is_verified) {
       return res.status(400).json({ error: "User is already verified" });
     }
     
-    // Update status to 'in_progress'
     const updated = await userService.updateVerificationStatus(firebaseUid, 'in_progress');
     
     res.json({
@@ -272,31 +460,27 @@ const submitVerification = async (req, res) => {
 // Approve verification (Admin only)
 const approveVerification = async (req, res) => {
   try {
-    const { userId } = req.params; // This is the user's firebase_uid
+    const { userId } = req.params;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can approve verification" });
     }
     
-    // Get the user to verify
     const userToVerify = await userService.getUserByFirebaseUid(userId);
     
     if (!userToVerify) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Check if user is landlord
-    if (userToVerify.role !== 'landlord') {
-      return res.status(400).json({ error: "Verification can only be approved for landlords" });
+    const allowedRoles = ['landlord', 'agent', 'movers'];
+    if (!allowedRoles.includes(userToVerify.role)) {
+      return res.status(400).json({ error: "Verification can only be approved for landlords, agents, and movers" });
     }
     
-    // Check if already verified
     if (userToVerify.is_verified) {
       return res.status(400).json({ error: "User is already verified" });
     }
     
-    // Update status to 'verified'
     const updated = await userService.updateVerificationStatus(userId, 'verified');
     
     res.json({
@@ -322,19 +506,16 @@ const rejectVerification = async (req, res) => {
     const { userId } = req.params;
     const { reason } = req.body;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can reject verification" });
     }
     
-    // Get the user
     const userToReject = await userService.getUserByFirebaseUid(userId);
     
     if (!userToReject) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Reset status to 'not_verified'
     const updated = await userService.updateVerificationStatus(userId, 'not_verified');
     
     res.json({
@@ -357,7 +538,6 @@ const rejectVerification = async (req, res) => {
 // Get all pending verification requests (Admin only)
 const getPendingVerifications = async (req, res) => {
   try {
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can view pending verifications" });
     }
@@ -368,7 +548,7 @@ const getPendingVerifications = async (req, res) => {
       SELECT id, firebase_uid, email, full_name, phone_number, 
              profile_image_url, created_at, updated_at
       FROM users 
-      WHERE role = 'landlord' 
+      WHERE role IN ('landlord', 'agent', 'movers')
         AND verification_status = 'in_progress'
         AND is_verified = false
       ORDER BY updated_at ASC
@@ -389,6 +569,13 @@ const getPendingVerifications = async (req, res) => {
 // Update landlord listings count
 const updateListingsCount = async (req, res) => {
   try {
+    if (!req.user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first.",
+        requires_verification: true
+      });
+    }
+    
     const firebaseUid = req.user.firebase_uid;
     const totalListings = await userService.updateLandlordListingsCount(firebaseUid);
     
@@ -422,7 +609,6 @@ const logout = async (req, res) => {
 // Get all users (Admin only)
 const getAllUsers = async (req, res) => {
   try {
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can view all users" });
     }
@@ -446,7 +632,6 @@ const deactivateUser = async (req, res) => {
   try {
     const { firebaseUid } = req.params;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can deactivate users" });
     }
@@ -471,6 +656,10 @@ const deactivateUser = async (req, res) => {
 module.exports = {
   signUp,
   signIn,
+  resendVerificationCode,
+  verifyEmailCode,
+  forgotPassword,
+  resetPassword,
   refreshToken,
   getCurrentUser,
   getPublicUserProfile,

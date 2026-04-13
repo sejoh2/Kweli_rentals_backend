@@ -4,7 +4,6 @@ const pool = require("../config/db");
 async function createOrUpdateUserFromSignup(userData) {
   const { uid, email, full_name, phone_number, location, profile_image_url, role, email_verified, auth_provider } = userData;
   
-  // Generate profile image URL if not provided
   const finalProfileImageUrl = profile_image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(full_name || email.split('@')[0])}&background=random&color=fff&bold=true`;
   
   const result = await pool.query(
@@ -54,6 +53,17 @@ async function getUserByFirebaseUid(firebaseUid) {
   return result.rows[0];
 }
 
+// Get user by email
+async function getUserByEmail(email) {
+  const result = await pool.query(
+    `
+    SELECT * FROM users WHERE email = $1
+    `,
+    [email]
+  );
+  return result.rows[0];
+}
+
 // Get user by ID
 async function getUserById(id) {
   const result = await pool.query(
@@ -61,6 +71,38 @@ async function getUserById(id) {
     SELECT * FROM users WHERE id = $1
     `,
     [id]
+  );
+  return result.rows[0];
+}
+
+// Verify user email
+// Verify user email - This should be called when email is verified
+async function verifyUserEmail(email) {
+  const result = await pool.query(
+    `
+    UPDATE users 
+    SET email_verified = true, 
+        updated_at = CURRENT_TIMESTAMP
+    WHERE email = $1
+    RETURNING *
+    `,
+    [email]
+  );
+  return result.rows[0];
+}
+
+// Add this new function to sync verification status for admins
+async function syncAdminVerification(firebaseUid) {
+  const result = await pool.query(
+    `
+    UPDATE users 
+    SET is_verified = true, 
+        verification_status = 'verified',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE firebase_uid = $1 AND role = 'admin'
+    RETURNING *
+    `,
+    [firebaseUid]
   );
   return result.rows[0];
 }
@@ -80,7 +122,7 @@ async function updateLastLogin(firebaseUid) {
   return result.rows[0];
 }
 
-// Update user profile (editable fields only)
+// Update user profile
 async function updateUserProfile(firebaseUid, updates) {
   const allowedUpdates = ['full_name', 'phone_number', 'location', 'profile_image_url'];
   
@@ -113,7 +155,7 @@ async function updateUserProfile(firebaseUid, updates) {
 
 // Update user role
 async function updateUserRole(firebaseUid, newRole) {
-  const validRoles = ['home_finder', 'landlord', 'agent', 'movers'];
+  const validRoles = ['home_finder', 'landlord', 'agent', 'movers', 'admin'];
   if (!validRoles.includes(newRole)) {
     throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`);
   }
@@ -320,7 +362,9 @@ async function updateLandlordStats(uid, totalListings) {
 module.exports = {
   createOrUpdateUserFromSignup,
   getUserByFirebaseUid,
+  getUserByEmail,
   getUserById,
+  verifyUserEmail,
   updateLastLogin,
   updateUserProfile,
   updateUserRole,
@@ -333,5 +377,6 @@ module.exports = {
   getLandlordByUid,
   getLandlordById,
   updateLandlord,
-  updateLandlordStats
+  updateLandlordStats,
+  syncAdminVerification,
 };
