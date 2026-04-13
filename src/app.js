@@ -9,13 +9,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/property", propertyRoutes);
+// ✅ ADD ROOT ENDPOINT HERE (before other routes)
+app.get("/", (req, res) => {
+  res.json({
+    message: "Kweli Rentals API is running!",
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: "/api/auth",
+      properties: "/api/property",
+      health: "/health"
+    }
+  });
+});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
+
+// Routes
+app.use("/api/auth", authRoutes);
+app.use("/api/property", propertyRoutes);
 
 module.exports = app;
