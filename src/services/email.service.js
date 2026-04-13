@@ -1,21 +1,52 @@
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const dns = require('dns');
 
 // Store verification codes temporarily (in production, use Redis or database)
 const verificationCodes = new Map();
 const passwordResetCodes = new Map();
 
-// Create transporter
+// Force DNS resolution to use IPv4 only
+dns.setDefaultResultOrder('ipv4first');
+
+// Create transporter with comprehensive IPv4 configuration
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: true,
+  port: Number(process.env.EMAIL_PORT),
+  secure: process.env.EMAIL_PORT == '465', // true for port 465
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
-  family: 4,
+  family: 4, // Force IPv4
+  lookup: dns.lookup, // Use DNS lookup with ipv4first
+  tls: {
+    rejectUnauthorized: false, // Only for testing, remove in production
+    ciphers: 'SSLv3'
+  },
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
+  debug: true // Enable debug logging
 });
+
+// Alternative transporter using SMTP connection options
+const createAlternativeTransporter = () => {
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    family: 4,
+    lookup: dns.lookup,
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+};
 
 // Generate 6-digit verification code
 const generateVerificationCode = () => {
@@ -29,7 +60,7 @@ const sendVerificationCode = async (email, name) => {
   // Store code with expiration (15 minutes)
   verificationCodes.set(email, {
     code: code,
-    expiresAt: Date.now() + 15 * 60 * 1000, // 15 minutes
+    expiresAt: Date.now() + 15 * 60 * 1000,
     attempts: 0
   });
   
@@ -39,7 +70,7 @@ const sendVerificationCode = async (email, name) => {
   }, 15 * 60 * 1000);
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: `"KweliRentals" <${process.env.EMAIL_FROM}>`,
     to: email,
     subject: 'Verify Your Email - KweliRentals',
     html: `
@@ -77,15 +108,26 @@ const sendVerificationCode = async (email, name) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Email sent successfully:', info.messageId);
     return { success: true, code: code };
   } catch (error) {
-    console.error('Email sending failed:', error);
-    return { success: false, error: error.message };
+    console.error('Email sending failed with primary transporter:', error);
+    
+    // Try alternative transporter
+    console.log('Attempting with alternative transporter...');
+    const altTransporter = createAlternativeTransporter();
+    try {
+      const info = await altTransporter.sendMail(mailOptions);
+      console.log('Email sent successfully with alternative transporter:', info.messageId);
+      return { success: true, code: code };
+    } catch (altError) {
+      console.error('Both email transporters failed:', altError);
+      return { success: false, error: altError.message };
+    }
   }
 };
 
-// Verify code
 // Verify code - MODIFIED to return the original code for auto-login
 const verifyCode = (email, code) => {
   const storedData = verificationCodes.get(email);
@@ -129,7 +171,7 @@ const sendPasswordResetCode = async (email, name) => {
   }, 15 * 60 * 1000);
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: `"KweliRentals" <${process.env.EMAIL_FROM}>`,
     to: email,
     subject: 'Password Reset Code - KweliRentals',
     html: `
@@ -168,10 +210,11 @@ const sendPasswordResetCode = async (email, name) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Password reset email sent successfully:', info.messageId);
     return { success: true };
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error('Password reset email sending failed:', error);
     return { success: false, error: error.message };
   }
 };
@@ -205,7 +248,7 @@ const verifyPasswordResetCode = (email, code) => {
 // Send welcome email after verification
 const sendWelcomeEmail = async (email, name) => {
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: `"KweliRentals" <${process.env.EMAIL_FROM}>`,
     to: email,
     subject: 'Welcome to KweliRentals! 🎉',
     html: `
@@ -247,10 +290,11 @@ const sendWelcomeEmail = async (email, name) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Welcome email sent successfully:', info.messageId);
     return { success: true };
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error('Welcome email sending failed:', error);
     return { success: false, error: error.message };
   }
 };
