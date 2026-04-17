@@ -18,4 +18,8 @@ app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
+app.get("/", (req, res) => {
+  res.send("🚀 Kweli Rentals Backend is running");
+});
+
 module.exports = app;

@@ -1,44 +1,100 @@
 const nodemailer = require('nodemailer');
-const crypto = require('crypto');
 
-// Store verification codes temporarily (in production, use Redis or database)
+// Store verification codes temporarily
 const verificationCodes = new Map();
 const passwordResetCodes = new Map();
 
-// Create transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Try multiple ports for Gmail SMTP
+const getGmailTransporter = (port) => {
+  const isSecure = port === 465;
+  
+  console.log(`📧 [EMAIL] Trying Gmail on port ${port} (SSL: ${isSecure})...`);
+  
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: port,
+    secure: isSecure, // true for 465, false for 587
+    family: 4, // Force IPv4
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
+  });
+};
+
+// Create transporter with fallback ports
+const createTransporter = async () => {
+  // Try SendGrid first if available
+  if (process.env.SENDGRID_API_KEY) {
+    console.log('📧 [EMAIL] Creating SendGrid transporter...');
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.sendgrid.net',
+      port: 587,
+      secure: false,
+      auth: {
+        user: 'apikey',
+        pass: process.env.SENDGRID_API_KEY,
+      },
+      connectionTimeout: 30000,
+      greetingTimeout: 30000,
+    });
+    
+    try {
+      await transporter.verify();
+      console.log('✅ [EMAIL] SendGrid connection successful');
+      return transporter;
+    } catch (error) {
+      console.log('⚠️ [EMAIL] SendGrid failed, trying Gmail...');
+    }
+  }
+
+  // Try Gmail on different ports
+  const ports = [465, 587, 25];
+  
+  for (const port of ports) {
+    try {
+      const transporter = getGmailTransporter(port);
+      await transporter.verify();
+      console.log(`✅ [EMAIL] Gmail connection successful on port ${port}`);
+      return transporter;
+    } catch (error) {
+      console.log(`❌ [EMAIL] Port ${port} failed: ${error.message}`);
+    }
+  }
+  
+  throw new Error('All email ports failed. Please check your network or use Brevo API.');
+};
 
 // Generate 6-digit verification code
 const generateVerificationCode = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  console.log(`📧 [EMAIL] Generated code: ${code}`);
+  return code;
 };
 
 // Send verification code email
 const sendVerificationCode = async (email, name) => {
-  const code = generateVerificationCode();
+  console.log(`📧 [EMAIL] Sending verification code to: ${email}`);
   
+  const code = generateVerificationCode();
+
   // Store code with expiration (15 minutes)
   verificationCodes.set(email, {
     code: code,
-    expiresAt: Date.now() + 15 * 60 * 1000, // 15 minutes
+    expiresAt: Date.now() + 15 * 60 * 1000,
     attempts: 0
   });
-  
-  // Clean up old codes after 15 minutes
+
+  // Clean up after 15 minutes
   setTimeout(() => {
     verificationCodes.delete(email);
   }, 15 * 60 * 1000);
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_FROM || `KweliRentals <${process.env.EMAIL_USER}>`,
     to: email,
     subject: 'Verify Your Email - KweliRentals',
     html: `
@@ -61,7 +117,7 @@ const sendVerificationCode = async (email, name) => {
           </div>
           <div class="content">
             <h2>Welcome to KweliRentals, ${name}! 👋</h2>
-            <p>Thank you for signing up! Please use the verification code below to verify your email address:</p>
+            <p>Your verification code is:</p>
             <div class="code">${code}</div>
             <p>This code will expire in 15 minutes.</p>
             <p>If you didn't create an account, please ignore this email.</p>
@@ -76,61 +132,39 @@ const sendVerificationCode = async (email, name) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    const transporter = await createTransporter();
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ [EMAIL] Verification code sent to ${email}`);
+    console.log(`   Message ID: ${info.messageId}`);
     return { success: true, code: code };
   } catch (error) {
-    console.error('Email sending failed:', error);
-    return { success: false, error: error.message };
+    console.error(`❌ [EMAIL] Failed to send to ${email}:`, error.message);
+    console.error(`   ⚠️  Please check your internet connection or firewall settings`);
+    console.error(`   💡 Tip: Try using your phone's hotspot to bypass network restrictions`);
+    return { success: false, error: error.message, devCode: code };
   }
-};
-
-// Verify code
-// Verify code - MODIFIED to return the original code for auto-login
-const verifyCode = (email, code) => {
-  const storedData = verificationCodes.get(email);
-  
-  if (!storedData) {
-    return { success: false, error: "No verification code found. Please request a new code." };
-  }
-  
-  if (Date.now() > storedData.expiresAt) {
-    verificationCodes.delete(email);
-    return { success: false, error: "Verification code has expired. Please request a new code." };
-  }
-  
-  if (storedData.code !== code) {
-    storedData.attempts++;
-    if (storedData.attempts >= 5) {
-      verificationCodes.delete(email);
-      return { success: false, error: "Too many failed attempts. Please request a new code." };
-    }
-    return { success: false, error: "Invalid verification code. Please try again." };
-  }
-  
-  // Code is valid - store the original code for auto-login
-  const originalCode = storedData.code;
-  verificationCodes.delete(email);
-  return { success: true, codeOriginal: originalCode };
 };
 
 // Send password reset code
 const sendPasswordResetCode = async (email, name) => {
+  console.log(`📧 [EMAIL] Sending password reset code to: ${email}`);
+
   const code = generateVerificationCode();
-  
+
   passwordResetCodes.set(email, {
     code: code,
     expiresAt: Date.now() + 15 * 60 * 1000,
     attempts: 0
   });
-  
+
   setTimeout(() => {
     passwordResetCodes.delete(email);
   }, 15 * 60 * 1000);
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_FROM || `KweliRentals <${process.env.EMAIL_USER}>`,
     to: email,
-    subject: 'Password Reset Code - KweliRentals',
+    subject: 'Reset Your Password - KweliRentals',
     html: `
       <!DOCTYPE html>
       <html>
@@ -152,7 +186,7 @@ const sendPasswordResetCode = async (email, name) => {
           <div class="content">
             <h2>Password Reset Request</h2>
             <p>Hello ${name},</p>
-            <p>We received a request to reset your password. Use the code below to reset your password:</p>
+            <p>Your password reset code is:</p>
             <div class="code">${code}</div>
             <p>This code will expire in 15 minutes.</p>
             <p>If you didn't request this, please ignore this email.</p>
@@ -167,44 +201,22 @@ const sendPasswordResetCode = async (email, name) => {
   };
 
   try {
+    const transporter = await createTransporter();
     await transporter.sendMail(mailOptions);
+    console.log(`✅ [EMAIL] Password reset code sent to ${email}`);
     return { success: true };
   } catch (error) {
-    console.error('Email sending failed:', error);
-    return { success: false, error: error.message };
+    console.error(`❌ [EMAIL] Failed to send password reset:`, error.message);
+    return { success: false, error: error.message, devCode: code };
   }
-};
-
-// Verify password reset code
-const verifyPasswordResetCode = (email, code) => {
-  const storedData = passwordResetCodes.get(email);
-  
-  if (!storedData) {
-    return { success: false, error: "No reset code found. Please request a new code." };
-  }
-  
-  if (Date.now() > storedData.expiresAt) {
-    passwordResetCodes.delete(email);
-    return { success: false, error: "Reset code has expired. Please request a new code." };
-  }
-  
-  if (storedData.code !== code) {
-    storedData.attempts++;
-    if (storedData.attempts >= 5) {
-      passwordResetCodes.delete(email);
-      return { success: false, error: "Too many failed attempts. Please request a new code." };
-    }
-    return { success: false, error: "Invalid reset code. Please try again." };
-  }
-  
-  passwordResetCodes.delete(email);
-  return { success: true };
 };
 
 // Send welcome email after verification
 const sendWelcomeEmail = async (email, name) => {
+  console.log(`📧 [EMAIL] Sending welcome email to: ${email}`);
+
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: process.env.EMAIL_FROM || `KweliRentals <${process.env.EMAIL_USER}>`,
     to: email,
     subject: 'Welcome to KweliRentals! 🎉',
     html: `
@@ -246,18 +258,74 @@ const sendWelcomeEmail = async (email, name) => {
   };
 
   try {
+    const transporter = await createTransporter();
     await transporter.sendMail(mailOptions);
+    console.log(`✅ [EMAIL] Welcome email sent to ${email}`);
     return { success: true };
   } catch (error) {
-    console.error('Email sending failed:', error);
+    console.error(`❌ [EMAIL] Failed to send welcome email:`, error.message);
     return { success: false, error: error.message };
   }
 };
 
+// Verify code
+const verifyCode = (email, code) => {
+  console.log(`📧 [EMAIL] Verifying code for ${email}`);
+  const storedData = verificationCodes.get(email);
+
+  if (!storedData) {
+    return { success: false, error: "No verification code found. Please request a new code." };
+  }
+
+  if (Date.now() > storedData.expiresAt) {
+    verificationCodes.delete(email);
+    return { success: false, error: "Verification code has expired. Please request a new code." };
+  }
+
+  if (storedData.code !== code) {
+    storedData.attempts++;
+    if (storedData.attempts >= 5) {
+      verificationCodes.delete(email);
+      return { success: false, error: "Too many failed attempts. Please request a new code." };
+    }
+    return { success: false, error: "Invalid verification code. Please try again." };
+  }
+
+  console.log(`✅ [EMAIL] Code verified for ${email}`);
+  verificationCodes.delete(email);
+  return { success: true, codeOriginal: storedData.code };
+};
+
+// Verify password reset code
+const verifyPasswordResetCode = (email, code) => {
+  const storedData = passwordResetCodes.get(email);
+
+  if (!storedData) {
+    return { success: false, error: "No reset code found. Please request a new code." };
+  }
+
+  if (Date.now() > storedData.expiresAt) {
+    passwordResetCodes.delete(email);
+    return { success: false, error: "Reset code has expired. Please request a new code." };
+  }
+
+  if (storedData.code !== code) {
+    storedData.attempts++;
+    if (storedData.attempts >= 5) {
+      passwordResetCodes.delete(email);
+      return { success: false, error: "Too many failed attempts. Please request a new code." };
+    }
+    return { success: false, error: "Invalid reset code. Please try again." };
+  }
+
+  passwordResetCodes.delete(email);
+  return { success: true };
+};
+
 module.exports = {
   sendVerificationCode,
-  verifyCode,
   sendPasswordResetCode,
-  verifyPasswordResetCode,
   sendWelcomeEmail,
+  verifyCode,
+  verifyPasswordResetCode,
 };
