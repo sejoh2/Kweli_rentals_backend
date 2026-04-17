@@ -3,7 +3,7 @@ require("dotenv").config();
 const app = require("./src/app");
 const initTables = require("./src/migrations/initTables");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 // ANSI color codes
 const colors = {
