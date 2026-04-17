@@ -238,26 +238,51 @@ const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
     
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    
+    // Check if user exists
     const user = await userService.getUserByEmail(email);
     if (!user) {
-      return res.json({
-        success: true,
-        message: "If your email is registered, you will receive a password reset code",
+      return res.status(404).json({ 
+        error: "No account found with this email address",
+        code: "USER_NOT_FOUND"
       });
     }
     
-    await emailService.sendPasswordResetCode(email, user.full_name);
+    // Check if email is verified
+    if (!user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first before resetting your password.",
+        code: "EMAIL_NOT_VERIFIED"
+      });
+    }
     
-    res.json({
-      success: true,
-      message: "If your email is registered, you will receive a password reset code",
+    // Send password reset code email
+    const result = await emailService.sendPasswordResetCode(email, user.full_name);
+    
+    if (!result.success) {
+      return res.status(500).json({ 
+        error: "Failed to send reset code. Please try again later.",
+        code: "EMAIL_SEND_FAILED"
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Password reset code sent to your email",
+      code: "SUCCESS"
     });
+    
   } catch (error) {
     console.error("Error sending password reset code:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: "Something went wrong. Please try again later.",
+      code: "INTERNAL_ERROR"
+    });
   }
 };
-
 // Reset password with code
 const resetPassword = async (req, res) => {
   try {
@@ -271,27 +296,42 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
     
+    // Check if user exists first
+    const user = await userService.getUserByEmail(email);
+    if (!user) {
+      return res.status(404).json({ 
+        error: "No account found with this email address",
+        code: "USER_NOT_FOUND"
+      });
+    }
+    
     // Verify the reset code
     const verificationResult = emailService.verifyPasswordResetCode(email, code);
     
     if (!verificationResult.success) {
-      return res.status(400).json({ error: verificationResult.error });
+      return res.status(400).json({ 
+        error: verificationResult.error,
+        code: "INVALID_CODE"
+      });
     }
     
     // Update password in Firebase
-    const user = await admin.auth().getUserByEmail(email);
-    await admin.auth().updateUser(user.uid, { password: newPassword });
+    const firebaseUser = await admin.auth().getUserByEmail(email);
+    await admin.auth().updateUser(firebaseUser.uid, { password: newPassword });
     
     res.json({ 
       success: true, 
       message: "Password reset successfully. You can now sign in with your new password." 
     });
+    
   } catch (error) {
     console.error("Error resetting password:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: "Something went wrong. Please try again later.",
+      code: "INTERNAL_ERROR"
+    });
   }
 };
-
 // Refresh Token
 const refreshToken = async (req, res) => {
   try {
