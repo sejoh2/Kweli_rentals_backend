@@ -15,10 +15,7 @@ app.use("/api/property", propertyRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    message: "Server is running"
-  });
+  res.json({ status: "OK", timestamp: new Date().toISOString() });
 });
 
 app.get("/", (req, res) => {

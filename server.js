@@ -5,6 +5,7 @@ const initTables = require("./src/migrations/initTables");
 
 const PORT = process.env.PORT || 3000;
 
+// ANSI color codes
 const colors = {
   reset: "\x1b[0m",
   green: "\x1b[32m",
@@ -16,29 +17,29 @@ const colors = {
 
 async function start() {
   console.log(`${colors.cyan}🚀 Starting Kweli Rentals Backend...${colors.reset}`);
+  console.log(`${colors.yellow}⏳ Connecting to database...${colors.reset}`);
 
   try {
-    console.log(`${colors.yellow}⏳ Initializing database...${colors.reset}`);
+    // Initialize database tables
+    await initTables();
 
-    // IMPORTANT: wrap this so it doesn't crash silently
-    try {
-      await initTables();
-      console.log(`${colors.green}✅ Database initialized${colors.reset}`);
-    } catch (dbErr) {
-      console.log(`${colors.red}❌ DB init failed but server will still start:${colors.reset}`, dbErr.message);
-    }
-
-    const server = app.listen(PORT, "0.0.0.0", () => {
-      console.log(`${colors.green}✅ Server running on port ${PORT}${colors.reset}`);
-    });
-
-    // optional but important for Railway stability
-    server.on("error", (err) => {
-      console.log(`${colors.red}❌ Server error:${colors.reset}`, err.message);
+    // Start server
+   app.listen(PORT, "0.0.0.0", () => {
+      console.log(`${colors.green}✅ Server is running!${colors.reset}`);
+      console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+      console.log(`${colors.blue}🌐 Server URL:${colors.reset} http://localhost:${PORT}`);
+      console.log(`${colors.blue}🔐 Auth API:${colors.reset} http://localhost:${PORT}/api/auth`);
+      console.log(`${colors.blue}📝 Sign Up:${colors.reset} POST http://localhost:${PORT}/api/auth/signup`);
+      console.log(`${colors.blue}🔑 Sign In:${colors.reset} POST http://localhost:${PORT}/api/auth/signin`);
+      console.log(`${colors.blue}👤 Get User:${colors.reset} GET http://localhost:${PORT}/api/auth/me`);
+      console.log(`${colors.blue}🏠 Properties API:${colors.reset} http://localhost:${PORT}/api/property`);
+      console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+      console.log(`${colors.yellow}⚡ Server ready to accept requests${colors.reset}`);
     });
 
   } catch (error) {
-    console.log(`${colors.red}❌ Fatal startup error:${colors.reset}`, error.message);
+    console.log(`${colors.red}❌ Failed to start server:${colors.reset}`, error.message);
+    console.log(`${colors.red}❌ Server startup aborted due to database initialization failure${colors.reset}`);
     process.exit(1);
   }
 }
