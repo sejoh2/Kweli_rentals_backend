@@ -12,4 +12,10 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-module.exports = { supabase, supabaseAdmin };
+// Export both, but also export the regular client as default for backward compatibility
+module.exports = { 
+  supabase, 
+  supabaseAdmin,
+  // For backward compatibility
+  get default() { return supabase; }
+};

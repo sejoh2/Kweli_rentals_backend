@@ -9,9 +9,22 @@ exports.uploadMiddleware = upload.array("media", 10);
 exports.createProperty = async (req, res) => {
   try {
     console.log("Starting property creation...");
+    console.log("Headers:", req.headers);
+    console.log("User:", req.user);
+    
+    // Check authentication
+    if (!req.user) {
+      console.error("No user found in request");
+      return res.status(401).json({ error: "User not authenticated" });
+    }
     
     // Get owner_id from authenticated user
     const owner_id = req.user.firebase_uid;
+    if (!owner_id) {
+      console.error("No firebase_uid found in user");
+      return res.status(401).json({ error: "User ID not found" });
+    }
+    
     console.log("Owner ID:", owner_id);
     
     const files = req.files || [];
@@ -22,9 +35,14 @@ exports.createProperty = async (req, res) => {
     // Upload media files if provided
     if (files && files.length > 0) {
       for (const file of files) {
-        console.log("Uploading file:", file.originalname);
-        const url = await mediaService.uploadMedia(file);
-        mediaUrls.push(url);
+        try {
+          console.log("Uploading file:", file.originalname);
+          const url = await mediaService.uploadMedia(file);
+          mediaUrls.push(url);
+        } catch (uploadError) {
+          console.error("Error uploading file:", uploadError.message);
+          // Continue with other files, don't fail the whole request
+        }
       }
     }
 
@@ -98,7 +116,7 @@ exports.createProperty = async (req, res) => {
   }
 };
 
-// Rest of your controller functions remain the same...
+// Get all properties (public)
 exports.getAllProperties = async (req, res) => {
   try {
     const pool = require("../config/db");
@@ -187,6 +205,10 @@ exports.getPropertiesByOwnerId = async (req, res) => {
 
 exports.getMyProperties = async (req, res) => {
   try {
+    if (!req.user || !req.user.firebase_uid) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+    
     const owner_id = req.user.firebase_uid;
     const pool = require("../config/db");
     
