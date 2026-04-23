@@ -44,6 +44,23 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ Users table created${colors.reset}`);
 
+    // Create verification_documents table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS verification_documents (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        document_type VARCHAR(50) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_url TEXT NOT NULL,
+        file_size INT,
+        mime_type VARCHAR(100),
+        storage_path TEXT NOT NULL,
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log(`${colors.green}✅ Verification documents table created${colors.reset}`);
+
     // Create properties table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS properties (
@@ -96,6 +113,8 @@ async function initTables() {
       CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+      CREATE INDEX IF NOT EXISTS idx_verification_docs_user_id ON verification_documents(user_id);
+      CREATE INDEX IF NOT EXISTS idx_verification_docs_document_type ON verification_documents(document_type);
       CREATE INDEX IF NOT EXISTS idx_properties_owner_id ON properties(owner_id);
       CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
       CREATE INDEX IF NOT EXISTS idx_property_media_property_id ON property_media(property_id);

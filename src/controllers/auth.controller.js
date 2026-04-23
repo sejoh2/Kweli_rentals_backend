@@ -1,5 +1,6 @@
 const userService = require("../services/user.service");
 const emailService = require("../services/email.service");
+const documentService = require("../services/document.service");
 const { admin, signUpWithEmailPassword, signInWithEmailPassword, refreshFirebaseToken } = require("../config/firebase");
 
 // Sign Up with Email and Password (NO TOKEN ISSUED)
@@ -174,7 +175,6 @@ const resendVerificationCode = async (req, res) => {
   }
 };
 
-// Verify email code - AUTO AUTHENTICATE AND ISSUE TOKEN
 // Verify email code - MANUAL SIGN-IN (Recommended)
 const verifyEmailCode = async (req, res) => {
   try {
@@ -283,6 +283,7 @@ const forgotPassword = async (req, res) => {
     });
   }
 };
+
 // Reset password with code
 const resetPassword = async (req, res) => {
   try {
@@ -332,6 +333,7 @@ const resetPassword = async (req, res) => {
     });
   }
 };
+
 // Refresh Token
 const refreshToken = async (req, res) => {
   try {
@@ -497,7 +499,265 @@ const submitVerification = async (req, res) => {
   }
 };
 
-// Approve verification (Admin only)
+// ==================== NEW DOCUMENT UPLOAD FUNCTIONS ====================
+
+// Upload verification documents (Landlord/Agent/Movers only)
+// Upload verification documents (Landlord/Agent/Movers only)
+const uploadVerificationDocuments = async (req, res) => {
+  const pool = require("../config/db");
+  
+  try {
+    if (!req.user.email_verified) {
+      return res.status(403).json({ 
+        error: "Email not verified. Please verify your email first.",
+        requires_verification: true
+      });
+    }
+    
+    const firebaseUid = req.user.firebase_uid;
+    const allowedRoles = ['landlord', 'agent', 'movers'];
+    
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Only landlords, agents, and movers can upload verification documents" });
+    }
+    
+    // Get user from database
+    const user = await userService.getUserByFirebaseUid(firebaseUid);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Handle files from multer - req.files is an object with field names as keys
+    const files = [];
+    
+    // Collect all files from different fields
+    if (req.files) {
+      // Using upload.fields() returns an object
+      if (typeof req.files === 'object' && !Array.isArray(req.files)) {
+        Object.keys(req.files).forEach(fieldName => {
+          if (Array.isArray(req.files[fieldName])) {
+            files.push(...req.files[fieldName]);
+          }
+        });
+      } 
+      // Using upload.array() would return an array
+      else if (Array.isArray(req.files)) {
+        files.push(...req.files);
+      }
+    }
+    
+    if (files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+    
+    const uploadedDocs = [];
+    
+    for (const file of files) {
+      // Determine document type from field name or filename
+      let documentType = req.body.document_type;
+      if (!documentType) {
+        if (file.fieldname === 'id_front') documentType = 'id_front';
+        else if (file.fieldname === 'id_back') documentType = 'id_back';
+        else if (file.fieldname === 'business_license') documentType = 'business_license';
+        else if (file.fieldname === 'proof_of_address') documentType = 'proof_of_address';
+        else documentType = 'other';
+      }
+      
+      // Upload document to Supabase
+      const uploadResult = await documentService.uploadVerificationDocument(
+        file,
+        user.id,
+        documentType
+      );
+      
+      // Save metadata to database
+      const savedDoc = await documentService.saveDocumentMetadata(
+        user.id,
+        documentType,
+        uploadResult,
+        pool
+      );
+      
+      uploadedDocs.push(savedDoc);
+    }
+    
+    // Update verification status to 'in_progress' if not already
+    if (req.user.verification_status === 'not_verified') {
+      await userService.updateVerificationStatus(firebaseUid, 'in_progress');
+    }
+    
+    res.json({
+      success: true,
+      message: `${uploadedDocs.length} document(s) uploaded successfully. Awaiting admin review.`,
+      documents: uploadedDocs,
+      verification_status: 'in_progress'
+    });
+    
+  } catch (error) {
+    console.error("Error uploading verification documents:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get verification documents (Admin only)
+const getVerificationDocuments = async (req, res) => {
+  const pool = require("../config/db");
+  
+  try {
+    const { userId } = req.params;
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can view verification documents" });
+    }
+    
+    // Get user
+    const user = await userService.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Get documents
+    const documents = await documentService.getUserDocuments(userId, pool);
+    
+    // Refresh signed URLs for each document (expiring in 15 minutes)
+    const refreshedDocs = await Promise.all(documents.map(async (doc) => {
+      if (doc.storage_path) {
+        try {
+          const freshUrl = await documentService.refreshSignedUrl(doc.storage_path, 900);
+          doc.file_url = freshUrl;
+        } catch (err) {
+          console.error(`Failed to refresh URL for ${doc.storage_path}:`, err.message);
+        }
+      }
+      return doc;
+    }));
+    
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+        verification_status: user.verification_status,
+        is_verified: user.is_verified,
+      },
+      documents: refreshedDocs
+    });
+    
+  } catch (error) {
+    console.error("Error getting verification documents:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Approve verification with document review (Admin only)
+const approveVerificationWithDocs = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { notes } = req.body;
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can approve verification" });
+    }
+    
+    // Get the user to verify
+    const userToVerify = await userService.getUserById(userId);
+    
+    if (!userToVerify) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    const allowedRoles = ['landlord', 'agent', 'movers'];
+    if (!allowedRoles.includes(userToVerify.role)) {
+      return res.status(400).json({ error: "Verification can only be approved for landlords, agents, and movers" });
+    }
+    
+    // Check if already verified
+    if (userToVerify.is_verified) {
+      return res.status(400).json({ error: "User is already verified" });
+    }
+    
+    // Update verification status
+    const updated = await userService.updateVerificationStatus(userToVerify.firebase_uid, 'verified');
+    
+    // Store admin notes
+    if (notes) {
+      const pool = require("../config/db");
+      await pool.query(
+        `UPDATE users SET admin_notes = $1, verified_by = $2, verified_at = NOW() 
+         WHERE id = $3`,
+        [notes, req.user.id, userId]
+      );
+    }
+    
+    res.json({
+      success: true,
+      message: `User ${userToVerify.full_name} has been verified successfully`,
+      user: {
+        id: userToVerify.id,
+        full_name: userToVerify.full_name,
+        email: userToVerify.email,
+        is_verified: updated.is_verified,
+        verification_status: updated.verification_status
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error approving verification:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Reject verification with document cleanup (Admin only)
+const rejectVerificationWithCleanup = async (req, res) => {
+  const pool = require("../config/db");
+  
+  try {
+    const { userId } = req.params;
+    const { reason } = req.body;
+    
+    // Check if requester is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Only admins can reject verification" });
+    }
+    
+    // Get the user
+    const userToReject = await userService.getUserByFirebaseUid(userId);
+    
+    if (!userToReject) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // Delete all uploaded documents
+    await documentService.deleteAllUserDocuments(userToReject.id, pool);
+    
+    // Reset status to 'not_verified'
+    const updated = await userService.updateVerificationStatus(userId, 'not_verified');
+    
+    res.json({
+      success: true,
+      message: `Verification rejected for ${userToReject.full_name}${reason ? `: ${reason}` : ''} and documents deleted.`,
+      user: {
+        id: userToReject.id,
+        full_name: userToReject.full_name,
+        email: userToReject.email,
+        is_verified: updated.is_verified,
+        verification_status: updated.verification_status
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error rejecting verification:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==================== END NEW DOCUMENT UPLOAD FUNCTIONS ====================
+
+// Approve verification (Admin only) - Keep original
 const approveVerification = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -540,7 +800,7 @@ const approveVerification = async (req, res) => {
   }
 };
 
-// Reject verification (Admin only)
+// Reject verification (Admin only) - Keep original
 const rejectVerification = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -712,5 +972,10 @@ module.exports = {
   updateListingsCount,
   logout,
   getAllUsers,
-  deactivateUser
+  deactivateUser,
+  // New document upload functions
+  uploadVerificationDocuments,
+  getVerificationDocuments,
+  approveVerificationWithDocs,
+  rejectVerificationWithCleanup
 };
