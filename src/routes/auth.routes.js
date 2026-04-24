@@ -20,6 +20,14 @@ router.get("/me", authenticate, authController.getCurrentUser);
 router.put("/profile", authenticate, authController.updateUserProfile);
 router.post("/logout", authenticate, authController.logout);
 
+// ==================== PROFILE IMAGE UPLOAD ====================
+router.post(
+  "/upload-profile-image",
+  authenticate,
+  upload.single("profile_image"),
+  authController.uploadProfileImage
+);
+
 // ==================== LANDLORD ONLY ROUTES ====================
 router.get("/listings-count", authenticate, requireRole('landlord'), authController.updateListingsCount);
 router.post("/verification/submit", authenticate, requireRole('landlord'), authController.submitVerification);

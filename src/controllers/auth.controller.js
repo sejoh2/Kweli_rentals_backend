@@ -435,6 +435,42 @@ const updateUserProfile = async (req, res) => {
   }
 };
 
+// Upload profile image first to update the profile
+const uploadProfileImage = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    // Use existing media service to upload to Supabase
+    const mediaService = require("../services/media.service");
+    const imageUrl = await mediaService.uploadMedia(req.file);
+
+    // Update user's profile_image_url in database
+    const pool = require("../config/db");
+    await pool.query(
+      `UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE firebase_uid = $2`,
+      [imageUrl, req.user.firebase_uid]
+    );
+
+    // Get updated user
+    const updatedUser = await userService.getUserByFirebaseUid(req.user.firebase_uid);
+
+    res.json({
+      success: true,
+      imageUrl: imageUrl,
+      user: updatedUser
+    });
+  } catch (error) {
+    console.error("Error uploading profile image:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Update user role (Admin only)
 const updateUserRole = async (req, res) => {
   try {
@@ -964,6 +1000,7 @@ module.exports = {
   getCurrentUser,
   getPublicUserProfile,
   updateUserProfile,
+  uploadProfileImage, 
   updateUserRole,
   submitVerification,
   approveVerification,
