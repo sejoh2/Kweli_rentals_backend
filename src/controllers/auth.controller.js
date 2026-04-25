@@ -20,7 +20,6 @@ const signUp = async (req, res) => {
     const existingUser = await userService.getUserByEmail(email);
     if (existingUser) {
       if (!existingUser.email_verified) {
-        // User exists but not verified - send new code
         await emailService.sendVerificationCode(email, existingUser.full_name);
         return res.status(200).json({
           success: true,
@@ -33,10 +32,8 @@ const signUp = async (req, res) => {
       }
     }
     
-    // Create user in Firebase Auth
     const firebaseUser = await signUpWithEmailPassword(email, password, full_name);
     
-    // Create user in our database (email not verified yet)
     const userData = {
       uid: firebaseUser.localId,
       email: firebaseUser.email,
@@ -44,12 +41,13 @@ const signUp = async (req, res) => {
       phone_number: phone_number || null,
       role: role,
       email_verified: false,
-      auth_provider: 'email'
+      auth_provider: 'email',
+      documents_submitted: false,
+      was_rejected: false
     };
     
     const dbUser = await userService.createOrUpdateUserFromSignup(userData);
     
-    // Send verification code email
     const emailResult = await emailService.sendVerificationCode(email, full_name || email.split('@')[0]);
     
     if (!emailResult.success) {
@@ -78,7 +76,7 @@ const signUp = async (req, res) => {
   }
 };
 
-// Sign In with Email and Password (BLOCK if email not verified)
+// Sign In with Email and Password
 const signIn = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -87,16 +85,13 @@ const signIn = async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
     
-    // Get user from database first
     const dbUser = await userService.getUserByEmail(email);
     
     if (!dbUser) {
       return res.status(401).json({ error: "User not found. Please register first." });
     }
     
-    // CHECK IF EMAIL IS VERIFIED
     if (!dbUser.email_verified) {
-      // Send a new verification code
       await emailService.sendVerificationCode(email, dbUser.full_name);
       return res.status(403).json({ 
         error: "Email not verified. A new verification code has been sent to your email.",
@@ -105,13 +100,8 @@ const signIn = async (req, res) => {
       });
     }
     
-    // Sign in with Firebase Auth REST API
     const firebaseUser = await signInWithEmailPassword(email, password);
-    
-    // Update last login
     await userService.updateLastLogin(firebaseUser.localId);
-    
-    // Get fresh user data
     const verifiedUser = await userService.getUserByFirebaseUid(firebaseUser.localId);
     
     res.json({
@@ -128,7 +118,9 @@ const signIn = async (req, res) => {
         total_listings: verifiedUser.total_listings,
         email_verified: verifiedUser.email_verified,
         is_verified: verifiedUser.is_verified,
-        verification_status: verifiedUser.verification_status
+        verification_status: verifiedUser.verification_status,
+        was_rejected: verifiedUser.was_rejected,
+        rejection_reason: verifiedUser.rejection_reason
       },
       token: firebaseUser.idToken,
       refreshToken: firebaseUser.refreshToken
@@ -175,7 +167,7 @@ const resendVerificationCode = async (req, res) => {
   }
 };
 
-// Verify email code - MANUAL SIGN-IN (Recommended)
+// Verify email code - MANUAL SIGN-IN
 const verifyEmailCode = async (req, res) => {
   try {
     const { email, code } = req.body;
@@ -184,32 +176,26 @@ const verifyEmailCode = async (req, res) => {
       return res.status(400).json({ error: "Email and verification code are required" });
     }
     
-    // Verify the code
     const verificationResult = emailService.verifyCode(email, code);
     
     if (!verificationResult.success) {
       return res.status(400).json({ error: verificationResult.error });
     }
     
-    // Get user from database
     const user = await userService.getUserByEmail(email);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Update email_verified to true
     let updatedUser = await userService.verifyUserEmail(email);
     
-    // For home_finder role, also set is_verified and verification_status to verified
     if (updatedUser.role === 'home_finder') {
       await userService.updateVerificationStatus(updatedUser.firebase_uid, 'verified');
       updatedUser = await userService.getUserByEmail(email);
     }
     
-    // Send welcome email
     await emailService.sendWelcomeEmail(email, updatedUser.full_name);
     
-    // Return success - user must sign in manually
     res.json({
       success: true,
       message: "Email verified successfully! You can now sign in.",
@@ -242,7 +228,6 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ error: "Email is required" });
     }
     
-    // Check if user exists
     const user = await userService.getUserByEmail(email);
     if (!user) {
       return res.status(404).json({ 
@@ -251,7 +236,6 @@ const forgotPassword = async (req, res) => {
       });
     }
     
-    // Check if email is verified
     if (!user.email_verified) {
       return res.status(403).json({ 
         error: "Email not verified. Please verify your email first before resetting your password.",
@@ -259,7 +243,6 @@ const forgotPassword = async (req, res) => {
       });
     }
     
-    // Send password reset code email
     const result = await emailService.sendPasswordResetCode(email, user.full_name);
     
     if (!result.success) {
@@ -297,7 +280,6 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
     
-    // Check if user exists first
     const user = await userService.getUserByEmail(email);
     if (!user) {
       return res.status(404).json({ 
@@ -306,7 +288,6 @@ const resetPassword = async (req, res) => {
       });
     }
     
-    // Verify the reset code
     const verificationResult = emailService.verifyPasswordResetCode(email, code);
     
     if (!verificationResult.success) {
@@ -316,7 +297,6 @@ const resetPassword = async (req, res) => {
       });
     }
     
-    // Update password in Firebase
     const firebaseUser = await admin.auth().getUserByEmail(email);
     await admin.auth().updateUser(firebaseUser.uid, { password: newPassword });
     
@@ -435,7 +415,7 @@ const updateUserProfile = async (req, res) => {
   }
 };
 
-// Upload profile image first to update the profile
+// Upload profile image
 const uploadProfileImage = async (req, res) => {
   try {
     if (!req.user) {
@@ -446,18 +426,15 @@ const uploadProfileImage = async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    // Use existing media service to upload to Supabase
     const mediaService = require("../services/media.service");
     const imageUrl = await mediaService.uploadMedia(req.file);
 
-    // Update user's profile_image_url in database
     const pool = require("../config/db");
     await pool.query(
       `UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE firebase_uid = $2`,
       [imageUrl, req.user.firebase_uid]
     );
 
-    // Get updated user
     const updatedUser = await userService.getUserByFirebaseUid(req.user.firebase_uid);
 
     res.json({
@@ -482,7 +459,6 @@ const updateUserRole = async (req, res) => {
     
     const updatedUser = await userService.updateUserRole(userId, role);
     
-    // If promoting to admin, also verify them
     if (role === 'admin' && !updatedUser.is_verified) {
       await userService.syncAdminVerification(updatedUser.firebase_uid);
     }
@@ -523,6 +499,18 @@ const submitVerification = async (req, res) => {
     
     const updated = await userService.updateVerificationStatus(firebaseUid, 'in_progress');
     
+    // Reset rejection flags when user resubmits
+    const pool = require("../config/db");
+    await pool.query(
+      `UPDATE users 
+       SET was_rejected = false,
+           rejection_reason = NULL,
+           documents_submitted = true,
+           updated_at = NOW()
+       WHERE firebase_uid = $1`,
+      [firebaseUid]
+    );
+    
     res.json({
       success: true,
       message: "Verification request submitted successfully. Awaiting admin approval.",
@@ -535,10 +523,8 @@ const submitVerification = async (req, res) => {
   }
 };
 
-// ==================== NEW DOCUMENT UPLOAD FUNCTIONS ====================
+// ==================== DOCUMENT UPLOAD FUNCTIONS ====================
 
-// Upload verification documents (Landlord/Agent/Movers only)
-// Upload verification documents (Landlord/Agent/Movers only)
 const uploadVerificationDocuments = async (req, res) => {
   const pool = require("../config/db");
   
@@ -557,27 +543,21 @@ const uploadVerificationDocuments = async (req, res) => {
       return res.status(403).json({ error: "Only landlords, agents, and movers can upload verification documents" });
     }
     
-    // Get user from database
     const user = await userService.getUserByFirebaseUid(firebaseUid);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Handle files from multer - req.files is an object with field names as keys
     const files = [];
     
-    // Collect all files from different fields
     if (req.files) {
-      // Using upload.fields() returns an object
       if (typeof req.files === 'object' && !Array.isArray(req.files)) {
         Object.keys(req.files).forEach(fieldName => {
           if (Array.isArray(req.files[fieldName])) {
             files.push(...req.files[fieldName]);
           }
         });
-      } 
-      // Using upload.array() would return an array
-      else if (Array.isArray(req.files)) {
+      } else if (Array.isArray(req.files)) {
         files.push(...req.files);
       }
     }
@@ -589,7 +569,6 @@ const uploadVerificationDocuments = async (req, res) => {
     const uploadedDocs = [];
     
     for (const file of files) {
-      // Determine document type from field name or filename
       let documentType = req.body.document_type;
       if (!documentType) {
         if (file.fieldname === 'id_front') documentType = 'id_front';
@@ -599,14 +578,12 @@ const uploadVerificationDocuments = async (req, res) => {
         else documentType = 'other';
       }
       
-      // Upload document to Supabase
       const uploadResult = await documentService.uploadVerificationDocument(
         file,
         user.id,
         documentType
       );
       
-      // Save metadata to database
       const savedDoc = await documentService.saveDocumentMetadata(
         user.id,
         documentType,
@@ -617,10 +594,15 @@ const uploadVerificationDocuments = async (req, res) => {
       uploadedDocs.push(savedDoc);
     }
     
-    // Update verification status to 'in_progress' if not already
     if (req.user.verification_status === 'not_verified') {
       await userService.updateVerificationStatus(firebaseUid, 'in_progress');
     }
+    
+    // Mark that user has submitted documents
+    await pool.query(
+      `UPDATE users SET documents_submitted = true WHERE firebase_uid = $1`,
+      [firebaseUid]
+    );
     
     res.json({
       success: true,
@@ -635,28 +617,23 @@ const uploadVerificationDocuments = async (req, res) => {
   }
 };
 
-// Get verification documents (Admin only)
 const getVerificationDocuments = async (req, res) => {
   const pool = require("../config/db");
   
   try {
     const { userId } = req.params;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can view verification documents" });
     }
     
-    // Get user
     const user = await userService.getUserById(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Get documents
     const documents = await documentService.getUserDocuments(userId, pool);
     
-    // Refresh signed URLs for each document (expiring in 15 minutes)
     const refreshedDocs = await Promise.all(documents.map(async (doc) => {
       if (doc.storage_path) {
         try {
@@ -678,6 +655,8 @@ const getVerificationDocuments = async (req, res) => {
         role: user.role,
         verification_status: user.verification_status,
         is_verified: user.is_verified,
+        was_rejected: user.was_rejected,
+        rejection_reason: user.rejection_reason
       },
       documents: refreshedDocs
     });
@@ -688,18 +667,15 @@ const getVerificationDocuments = async (req, res) => {
   }
 };
 
-// Approve verification with document review (Admin only)
 const approveVerificationWithDocs = async (req, res) => {
   try {
     const { userId } = req.params;
     const { notes } = req.body;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can approve verification" });
     }
     
-    // Get the user to verify
     const userToVerify = await userService.getUserById(userId);
     
     if (!userToVerify) {
@@ -711,15 +687,12 @@ const approveVerificationWithDocs = async (req, res) => {
       return res.status(400).json({ error: "Verification can only be approved for landlords, agents, and movers" });
     }
     
-    // Check if already verified
     if (userToVerify.is_verified) {
       return res.status(400).json({ error: "User is already verified" });
     }
     
-    // Update verification status
     const updated = await userService.updateVerificationStatus(userToVerify.firebase_uid, 'verified');
     
-    // Store admin notes
     if (notes) {
       const pool = require("../config/db");
       await pool.query(
@@ -747,7 +720,6 @@ const approveVerificationWithDocs = async (req, res) => {
   }
 };
 
-// Reject verification with document cleanup (Admin only)
 const rejectVerificationWithCleanup = async (req, res) => {
   const pool = require("../config/db");
   
@@ -755,22 +727,18 @@ const rejectVerificationWithCleanup = async (req, res) => {
     const { userId } = req.params;
     const { reason } = req.body;
     
-    // Check if requester is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can reject verification" });
     }
     
-    // Get the user
     const userToReject = await userService.getUserByFirebaseUid(userId);
     
     if (!userToReject) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Delete all uploaded documents
     await documentService.deleteAllUserDocuments(userToReject.id, pool);
     
-    // Reset status to 'not_verified'
     const updated = await userService.updateVerificationStatus(userId, 'not_verified');
     
     res.json({
@@ -791,9 +759,8 @@ const rejectVerificationWithCleanup = async (req, res) => {
   }
 };
 
-// ==================== END NEW DOCUMENT UPLOAD FUNCTIONS ====================
+// ==================== APPROVE/REJECT VERIFICATION (ORIGINAL) ====================
 
-// Approve verification (Admin only) - Keep original
 const approveVerification = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -836,8 +803,9 @@ const approveVerification = async (req, res) => {
   }
 };
 
-// Reject verification (Admin only) - Keep original
 const rejectVerification = async (req, res) => {
+  const pool = require("../config/db");
+  
   try {
     const { userId } = req.params;
     const { reason } = req.body;
@@ -852,7 +820,20 @@ const rejectVerification = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
     
-    const updated = await userService.updateVerificationStatus(userId, 'not_verified');
+    // Update status and track rejection (documents remain)
+    await pool.query(
+      `UPDATE users 
+       SET verification_status = 'not_verified',
+           was_rejected = true,
+           rejection_reason = $1,
+           rejected_at = NOW(),
+           updated_at = NOW()
+       WHERE firebase_uid = $2
+       RETURNING *`,
+      [reason || 'No reason provided', userId]
+    );
+    
+    const updated = await userService.getUserByFirebaseUid(userId);
     
     res.json({
       success: true,
@@ -862,7 +843,9 @@ const rejectVerification = async (req, res) => {
         full_name: userToReject.full_name,
         email: userToReject.email,
         is_verified: updated.is_verified,
-        verification_status: updated.verification_status
+        verification_status: updated.verification_status,
+        was_rejected: true,
+        rejection_reason: reason
       }
     });
   } catch (error) {
@@ -871,7 +854,6 @@ const rejectVerification = async (req, res) => {
   }
 };
 
-// Get all pending verification requests (Admin only)
 const getPendingVerifications = async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -902,7 +884,6 @@ const getPendingVerifications = async (req, res) => {
   }
 };
 
-// Update landlord listings count
 const updateListingsCount = async (req, res) => {
   try {
     if (!req.user.email_verified) {
@@ -925,7 +906,6 @@ const updateListingsCount = async (req, res) => {
   }
 };
 
-// Logout
 const logout = async (req, res) => {
   try {
     if (req.firebaseUser) {
@@ -942,7 +922,6 @@ const logout = async (req, res) => {
   }
 };
 
-// Get all users (Admin only)
 const getAllUsers = async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -963,7 +942,6 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// Deactivate user (Admin only)
 const deactivateUser = async (req, res) => {
   try {
     const { firebaseUid } = req.params;
@@ -1010,7 +988,6 @@ module.exports = {
   logout,
   getAllUsers,
   deactivateUser,
-  // New document upload functions
   uploadVerificationDocuments,
   getVerificationDocuments,
   approveVerificationWithDocs,

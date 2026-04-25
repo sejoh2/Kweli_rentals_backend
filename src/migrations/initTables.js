@@ -19,7 +19,7 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ UUID extension enabled${colors.reset}`);
 
-    // Create users table (unified for all roles)
+    // Create users table (unified for all roles) with rejection tracking
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -37,12 +37,19 @@ async function initTables() {
         verification_status TEXT DEFAULT 'not_verified' CHECK (verification_status IN ('verified', 'in_progress', 'not_verified')),
         total_listings INT DEFAULT 0,
         rating DECIMAL(3,2) DEFAULT 0.0,
+        was_rejected BOOLEAN DEFAULT false,
+        rejection_reason TEXT,
+        rejected_at TIMESTAMP,
+        documents_submitted BOOLEAN DEFAULT false,
+        admin_notes TEXT,
+        verified_by UUID,
+        verified_at TIMESTAMP,
         last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log(`${colors.green}✅ Users table created${colors.reset}`);
+    console.log(`${colors.green}✅ Users table created with rejection tracking${colors.reset}`);
 
     // Create verification_documents table
     await pool.query(`
@@ -113,6 +120,8 @@ async function initTables() {
       CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+      CREATE INDEX IF NOT EXISTS idx_users_verification_status ON users(verification_status);
+      CREATE INDEX IF NOT EXISTS idx_users_was_rejected ON users(was_rejected);
       CREATE INDEX IF NOT EXISTS idx_verification_docs_user_id ON verification_documents(user_id);
       CREATE INDEX IF NOT EXISTS idx_verification_docs_document_type ON verification_documents(document_type);
       CREATE INDEX IF NOT EXISTS idx_properties_owner_id ON properties(owner_id);
