@@ -2,6 +2,8 @@ require("dotenv").config();
 
 const app = require("./src/app");
 const initTables = require("./src/migrations/initTables");
+const addMessagingTables = require("./src/migrations/addMessagingTables");
+const { initializeWebSocket } = require("./src/services/websocket.service");
 
 const PORT = process.env.PORT || 3000;
 
@@ -22,9 +24,10 @@ async function start() {
   try {
     // Initialize database tables
     await initTables();
+    await addMessagingTables();
 
     // Start server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`${colors.green}✅ Server is running!${colors.reset}`);
       console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       console.log(`${colors.blue}🌐 Server URL:${colors.reset} http://localhost:${PORT}`);
@@ -33,9 +36,14 @@ async function start() {
       console.log(`${colors.blue}🔑 Sign In:${colors.reset} POST http://localhost:${PORT}/api/auth/signin`);
       console.log(`${colors.blue}👤 Get User:${colors.reset} GET http://localhost:${PORT}/api/auth/me`);
       console.log(`${colors.blue}🏠 Properties API:${colors.reset} http://localhost:${PORT}/api/property`);
+      console.log(`${colors.blue}💬 Messages API:${colors.reset} http://localhost:${PORT}/api/messages`);
+      console.log(`${colors.blue}🔌 WebSocket:${colors.reset} ws://localhost:${PORT}`);
       console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
       console.log(`${colors.yellow}⚡ Server ready to accept requests${colors.reset}`);
     });
+
+    // Initialize WebSocket with the server
+    initializeWebSocket(server);
 
   } catch (error) {
     console.log(`${colors.red}❌ Failed to start server:${colors.reset}`, error.message);
