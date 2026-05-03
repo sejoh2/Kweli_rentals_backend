@@ -1,4 +1,5 @@
 const messageService = require("../services/message.service");
+const { getIO } = require("../services/websocket.service");
 
 const getConversations = async (req, res) => {
   try {
@@ -84,6 +85,20 @@ const sendMessage = async (req, res) => {
     
     const newMessage = await messageService.sendMessage(senderId, receiverId, message.trim());
     
+    // ✅ Broadcast via WebSocket to the conversation room
+    try {
+      const io = getIO();
+      io.to(`conversation:${newMessage.conversation_id}`).emit("new_message", newMessage);
+      io.to(`user:${receiverId}`).emit("message_received", {
+        conversationId: newMessage.conversation_id,
+        message: newMessage
+      });
+      console.log(`📡 Broadcasted message to conversation: ${newMessage.conversation_id}`);
+    } catch (wsError) {
+      console.error("WebSocket broadcast error:", wsError.message);
+      // Don't fail the request if WebSocket broadcast fails
+    }
+    
     res.status(201).json({
       success: true,
       message: newMessage
@@ -100,6 +115,20 @@ const markAsRead = async (req, res) => {
     const userId = req.user.firebase_uid;
     
     const count = await messageService.markMessagesAsRead(conversationId, userId);
+    
+    // ✅ Broadcast read receipt via WebSocket
+    if (count > 0) {
+      try {
+        const io = getIO();
+        io.to(`conversation:${conversationId}`).emit("messages_read", {
+          conversationId: conversationId,
+          readBy: userId,
+          timestamp: new Date()
+        });
+      } catch (wsError) {
+        console.error("WebSocket broadcast error:", wsError.message);
+      }
+    }
     
     res.json({
       success: true,
@@ -136,6 +165,18 @@ const updateStatus = async (req, res) => {
     }
     
     const status = await messageService.updateUserStatus(userId, is_online);
+    
+    // ✅ Broadcast status change via WebSocket
+    try {
+      const io = getIO();
+      io.emit(is_online ? "user_online" : "user_offline", {
+        userId: userId,
+        timestamp: new Date(),
+        last_seen: status.last_seen
+      });
+    } catch (wsError) {
+      console.error("WebSocket broadcast error:", wsError.message);
+    }
     
     res.json({
       success: true,
