@@ -85,8 +85,9 @@ const sendMessage = async (req, res) => {
     
     const newMessage = await messageService.sendMessage(senderId, receiverId, message.trim());
     
-    // ✅ Broadcast via WebSocket to the conversation room
+    // ✅ ADD THIS: Broadcast via WebSocket
     try {
+      const { getIO } = require("../services/websocket.service");
       const io = getIO();
       io.to(`conversation:${newMessage.conversation_id}`).emit("new_message", newMessage);
       io.to(`user:${receiverId}`).emit("message_received", {
@@ -116,9 +117,10 @@ const markAsRead = async (req, res) => {
     
     const count = await messageService.markMessagesAsRead(conversationId, userId);
     
-    // ✅ Broadcast read receipt via WebSocket
+    // ✅ ADD THIS: Broadcast read receipt via WebSocket
     if (count > 0) {
       try {
+        const { getIO } = require("../services/websocket.service");
         const io = getIO();
         io.to(`conversation:${conversationId}`).emit("messages_read", {
           conversationId: conversationId,
