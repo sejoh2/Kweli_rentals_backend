@@ -116,7 +116,7 @@ exports.createProperty = async (req, res) => {
   }
 };
 
-// Get all properties (public)
+// Get all properties (public) - Filter out occupied properties
 exports.getAllProperties = async (req, res) => {
   try {
     const pool = require("../config/db");
@@ -148,6 +148,7 @@ exports.getAllProperties = async (req, res) => {
       LEFT JOIN users u ON p.owner_id = u.firebase_uid
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
+      WHERE p.status != 'occupied'
       GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
     `);
@@ -479,7 +480,7 @@ exports.searchProperties = async (req, res) => {
       LEFT JOIN users u ON p.owner_id = u.firebase_uid
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
-      WHERE 1=1
+      WHERE p.status != 'occupied'
     `;
     
     const values = [];
