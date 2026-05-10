@@ -2,6 +2,7 @@ const multer = require("multer");
 const upload = multer({ dest: "uploads/" });
 const mediaService = require("../services/media.service");
 const propertyService = require("../services/property.service");
+const trendingService = require("../services/trending.service");
 
 exports.uploadMiddleware = upload.array("media", 10);
 
@@ -160,6 +161,52 @@ exports.getAllProperties = async (req, res) => {
   }
 };
 
+// Get trending properties (based on trending_score)
+exports.getTrendingProperties = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const trending = await trendingService.getTrendingProperties(limit);
+    
+    res.json({
+      success: true,
+      count: trending.length,
+      properties: trending
+    });
+  } catch (err) {
+    console.error("Error fetching trending properties:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Increment view count (track property views)
+exports.incrementView = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await trendingService.incrementViewCount(id);
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error incrementing view count:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Increment inquiry count (when someone inquires about property)
+exports.incrementInquiry = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await trendingService.incrementInquiryCount(id);
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error incrementing inquiry count:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getPropertiesByOwnerId = async (req, res) => {
   try {
     const { ownerId } = req.params;
@@ -249,46 +296,14 @@ exports.getMyProperties = async (req, res) => {
 exports.getPropertyById = async (req, res) => {
   try {
     const { id } = req.params;
-    const pool = require("../config/db");
     
-    const result = await pool.query(`
-      SELECT 
-        p.*,
-        jsonb_build_object(
-          'id', u.id,
-          'full_name', u.full_name,
-          'email', u.email,
-          'phone_number', u.phone_number,
-          'profile_image_url', u.profile_image_url,
-          'rating', u.rating,
-          'total_listings', u.total_listings,
-          'joined_at', u.created_at
-        ) as owner,
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object(
-            'id', pm.id,
-            'url', pm.url,
-            'type', pm.type
-          )) FILTER (WHERE pm.id IS NOT NULL), 
-          '[]'
-        ) as media,
-        COALESCE(
-          json_agg(DISTINCT pa.name) FILTER (WHERE pa.name IS NOT NULL),
-          '[]'
-        ) as amenities
-      FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
-      LEFT JOIN property_media pm ON p.id = pm.property_id
-      LEFT JOIN property_amenities pa ON p.id = pa.property_id
-      WHERE p.id = $1
-      GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating, u.total_listings, u.created_at
-    `, [id]);
+    const property = await trendingService.getPropertyWithTrendingScore(id);
     
-    if (result.rows.length === 0) {
+    if (!property) {
       return res.status(404).json({ error: "Property not found" });
     }
     
-    res.json(result.rows[0]);
+    res.json(property);
   } catch (err) {
     console.error("Error fetching property:", err);
     res.status(500).json({ error: err.message });
@@ -430,9 +445,11 @@ exports.toggleLike = async (req, res) => {
     
     const result = await pool.query(
       `UPDATE properties 
-       SET likes = likes + 1 
+       SET likes = likes + 1,
+           recent_likes = COALESCE(recent_likes, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 
-       RETURNING likes`,
+       RETURNING likes, recent_likes`,
       [id]
     );
     
@@ -440,9 +457,13 @@ exports.toggleLike = async (req, res) => {
       return res.status(404).json({ error: "Property not found" });
     }
     
+    // Update trending score after like
+    await trendingService.updatePropertyTrendingScore(id);
+    
     res.json({
       success: true,
-      likes: result.rows[0].likes
+      likes: result.rows[0].likes,
+      recent_likes: result.rows[0].recent_likes
     });
   } catch (err) {
     console.error("Error toggling like:", err);

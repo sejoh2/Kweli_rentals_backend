@@ -5,13 +5,16 @@ const { authenticate, requireRole } = require("../middleware/auth");
 
 // Public routes (anyone can view)
 router.get("/all", controller.getAllProperties);
+router.get("/trending", controller.getTrendingProperties);
 router.get("/search", controller.searchProperties);
 router.get("/:id", controller.getPropertyById);
 router.get("/owner/:ownerId", controller.getPropertiesByOwnerId);
 router.post("/:id/like", controller.toggleLike);
+router.post("/:id/view", controller.incrementView);
 
 // Protected routes (require authentication)
 router.get("/me/properties", authenticate, controller.getMyProperties);
+router.post("/:id/inquiry", authenticate, controller.incrementInquiry);
 
 // Protected routes (require landlord or agent role)
 router.post(

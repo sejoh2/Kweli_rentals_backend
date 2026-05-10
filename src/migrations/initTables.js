@@ -68,7 +68,7 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ Verification documents table created${colors.reset}`);
 
-    // Create properties table
+    // Create properties table with trending columns
     await pool.query(`
       CREATE TABLE IF NOT EXISTS properties (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -87,11 +87,16 @@ async function initTables() {
         furnished BOOLEAN DEFAULT false,
         status TEXT DEFAULT 'active' CHECK (status IN ('active', 'pending', 'occupied')),
         likes INT DEFAULT 0,
+        trending_score DECIMAL DEFAULT 0,
+        recent_likes INT DEFAULT 0,
+        recent_views INT DEFAULT 0,
+        recent_inquiries INT DEFAULT 0,
+        last_trending_update TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log(`${colors.green}✅ Properties table created${colors.reset}`);
+    console.log(`${colors.green}✅ Properties table created with trending columns${colors.reset}`);
 
     // Create property_media table
     await pool.query(`
@@ -126,6 +131,7 @@ async function initTables() {
       CREATE INDEX IF NOT EXISTS idx_verification_docs_document_type ON verification_documents(document_type);
       CREATE INDEX IF NOT EXISTS idx_properties_owner_id ON properties(owner_id);
       CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
+      CREATE INDEX IF NOT EXISTS idx_properties_trending_score ON properties(trending_score DESC);
       CREATE INDEX IF NOT EXISTS idx_property_media_property_id ON property_media(property_id);
       CREATE INDEX IF NOT EXISTS idx_property_amenities_property_id ON property_amenities(property_id);
     `);
