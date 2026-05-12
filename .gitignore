@@ -8,12 +8,12 @@ yarn.lock
 .env.local
 .env.production
 
-# Firebase credentials (CRITICAL!)
-firebase-service-account.json
-firebase-service-account-oneline.txt
-*.key
-*.pem
-*.p12
+# Africa's Talking credentials (keep secret!)
+# Get your API key from: https://account.africastalking.com/apps/sandbox/settings
+# Never commit API keys to git!
+
+# Supabase credentials (already in .env)
+# Keep your SUPABASE_KEY and SUPABASE_SERVICE_ROLE_KEY secret
 
 # Uploads
 uploads/

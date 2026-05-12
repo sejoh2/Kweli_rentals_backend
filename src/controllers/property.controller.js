@@ -20,9 +20,9 @@ exports.createProperty = async (req, res) => {
     }
     
     // Get owner_id from authenticated user
-    const owner_id = req.user.firebase_uid;
+    const owner_id = req.user.user_id;
     if (!owner_id) {
-      console.error("No firebase_uid found in user");
+      console.error("No user_id found in user");
       return res.status(401).json({ error: "User ID not found" });
     }
     
@@ -127,6 +127,7 @@ exports.getAllProperties = async (req, res) => {
         p.*,
         jsonb_build_object(
           'id', u.id,
+          'user_id', u.user_id,
           'full_name', u.full_name,
           'email', u.email,
           'phone_number', u.phone_number,
@@ -146,11 +147,11 @@ exports.getAllProperties = async (req, res) => {
           '[]'
         ) as amenities
       FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
+      LEFT JOIN users u ON p.owner_id = u.user_id
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.status != 'occupied'
-      GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+      GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
     `);
     
@@ -217,6 +218,7 @@ exports.getPropertiesByOwnerId = async (req, res) => {
         p.*,
         jsonb_build_object(
           'id', u.id,
+          'user_id', u.user_id,
           'full_name', u.full_name,
           'email', u.email,
           'phone_number', u.phone_number,
@@ -236,11 +238,11 @@ exports.getPropertiesByOwnerId = async (req, res) => {
           '[]'
         ) as amenities
       FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
+      LEFT JOIN users u ON p.owner_id = u.user_id
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.owner_id = $1
-      GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+      GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
     `, [ownerId]);
     
@@ -253,11 +255,11 @@ exports.getPropertiesByOwnerId = async (req, res) => {
 
 exports.getMyProperties = async (req, res) => {
   try {
-    if (!req.user || !req.user.firebase_uid) {
+    if (!req.user || !req.user.user_id) {
       return res.status(401).json({ error: "User not authenticated" });
     }
     
-    const owner_id = req.user.firebase_uid;
+    const owner_id = req.user.user_id;
     const pool = require("../config/db");
     
     const result = await pool.query(`
@@ -313,7 +315,7 @@ exports.getPropertyById = async (req, res) => {
 exports.updateProperty = async (req, res) => {
   try {
     const { id } = req.params;
-    const owner_id = req.user.firebase_uid;
+    const owner_id = req.user.user_id;
     const updates = req.body;
     const pool = require("../config/db");
     
@@ -370,7 +372,7 @@ exports.updatePropertyStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const owner_id = req.user.firebase_uid;
+    const owner_id = req.user.user_id;
     const pool = require("../config/db");
 
     const validStatuses = ['active', 'pending', 'occupied'];
@@ -411,7 +413,7 @@ exports.updatePropertyStatus = async (req, res) => {
 exports.deleteProperty = async (req, res) => {
   try {
     const { id } = req.params;
-    const owner_id = req.user.firebase_uid;
+    const owner_id = req.user.user_id;
     const pool = require("../config/db");
     
     const checkResult = await pool.query(
@@ -481,6 +483,7 @@ exports.searchProperties = async (req, res) => {
         p.*,
         jsonb_build_object(
           'id', u.id,
+          'user_id', u.user_id,
           'full_name', u.full_name,
           'profile_image_url', u.profile_image_url,
           'rating', u.rating
@@ -498,7 +501,7 @@ exports.searchProperties = async (req, res) => {
           '[]'
         ) as amenities
       FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
+      LEFT JOIN users u ON p.owner_id = u.user_id
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.status != 'occupied'
@@ -543,7 +546,7 @@ exports.searchProperties = async (req, res) => {
       paramIndex++;
     }
     
-    sqlQuery += ` GROUP BY p.id, u.id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
+    sqlQuery += ` GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
     
     const result = await pool.query(sqlQuery, values);
     

@@ -19,20 +19,20 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ UUID extension enabled${colors.reset}`);
 
-    // Create users table (unified for all roles) with rejection tracking
+    // Create users table - Phone number authentication only (NO Firebase, NO email/password)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        firebase_uid VARCHAR(128) UNIQUE NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
+        user_id VARCHAR(128) UNIQUE NOT NULL,
+        phone_number VARCHAR(20) UNIQUE NOT NULL,
+        phone_verified BOOLEAN DEFAULT false,
         full_name VARCHAR(255) NOT NULL,
-        phone_number VARCHAR(20),
+        email VARCHAR(255) UNIQUE,
         location TEXT,
         profile_image_url TEXT,
         role VARCHAR(50) DEFAULT 'home_finder' CHECK (role IN ('home_finder', 'landlord', 'agent', 'movers', 'admin')),
         is_active BOOLEAN DEFAULT true,
-        email_verified BOOLEAN DEFAULT false,
-        auth_provider VARCHAR(50) DEFAULT 'email' CHECK (auth_provider IN ('email', 'google', 'apple')),
+        auth_provider VARCHAR(50) DEFAULT 'phone' CHECK (auth_provider IN ('phone')),
         is_verified BOOLEAN DEFAULT false,
         verification_status TEXT DEFAULT 'not_verified' CHECK (verification_status IN ('verified', 'in_progress', 'not_verified')),
         total_listings INT DEFAULT 0,
@@ -49,7 +49,7 @@ async function initTables() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log(`${colors.green}✅ Users table created with rejection tracking${colors.reset}`);
+    console.log(`${colors.green}✅ Users table created (Phone + OTP authentication only)${colors.reset}`);
 
     // Create verification_documents table
     await pool.query(`
@@ -72,7 +72,7 @@ async function initTables() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS properties (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        owner_id VARCHAR(128) NOT NULL REFERENCES users(firebase_uid) ON DELETE CASCADE,
+        owner_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
         title TEXT NOT NULL,
         description TEXT,
         property_type TEXT NOT NULL,
@@ -122,13 +122,14 @@ async function initTables() {
 
     // Create indexes for better performance
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
+      CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
+      CREATE INDEX IF NOT EXISTS idx_users_phone_number ON users(phone_number);
+      CREATE INDEX IF NOT EXISTS idx_users_phone_verified ON users(phone_verified);
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
       CREATE INDEX IF NOT EXISTS idx_users_verification_status ON users(verification_status);
       CREATE INDEX IF NOT EXISTS idx_users_was_rejected ON users(was_rejected);
       CREATE INDEX IF NOT EXISTS idx_verification_docs_user_id ON verification_documents(user_id);
-      CREATE INDEX IF NOT EXISTS idx_verification_docs_document_type ON verification_documents(document_type);
       CREATE INDEX IF NOT EXISTS idx_properties_owner_id ON properties(owner_id);
       CREATE INDEX IF NOT EXISTS idx_properties_status ON properties(status);
       CREATE INDEX IF NOT EXISTS idx_properties_trending_score ON properties(trending_score DESC);
@@ -187,6 +188,10 @@ async function initTables() {
 
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
     console.log(`${colors.green}✅ ALL TABLES CREATED SUCCESSFULLY!${colors.reset}`);
+    console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+    console.log(`${colors.blue}📱 Authentication: Phone Number + OTP (Africa's Talking)${colors.reset}`);
+    console.log(`${colors.blue}🔐 No passwords - Pure OTP based authentication${colors.reset}`);
+    console.log(`${colors.blue}✅ No Firebase - Completely independent${colors.reset}`);
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
 
   } catch (error) {

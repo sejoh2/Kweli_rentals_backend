@@ -125,6 +125,7 @@ class TrendingService {
         p.*,
         jsonb_build_object(
           'id', u.id,
+          'user_id', u.user_id,
           'full_name', u.full_name,
           'email', u.email,
           'phone_number', u.phone_number,
@@ -144,11 +145,11 @@ class TrendingService {
           '[]'
         ) as amenities
       FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
+      LEFT JOIN users u ON p.owner_id = u.user_id
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.status != 'occupied' AND p.trending_score > 0
-      GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+      GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.trending_score DESC
       LIMIT $1
     `, [limit]);
@@ -167,6 +168,7 @@ class TrendingService {
         p.recent_inquiries,
         jsonb_build_object(
           'id', u.id,
+          'user_id', u.user_id,
           'full_name', u.full_name,
           'email', u.email,
           'phone_number', u.phone_number,
@@ -186,11 +188,11 @@ class TrendingService {
           '[]'
         ) as amenities
       FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.firebase_uid
+      LEFT JOIN users u ON p.owner_id = u.user_id
       LEFT JOIN property_media pm ON p.id = pm.property_id
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.id = $1
-      GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+      GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
     `, [propertyId]);
     
     return result.rows[0];

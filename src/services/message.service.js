@@ -30,7 +30,7 @@ class MessageService {
         CASE 
           WHEN c.participant1_id = $2 THEN 
             jsonb_build_object(
-              'id', u2.firebase_uid,
+              'id', u2.user_id,
               'name', u2.full_name,
               'avatar', u2.profile_image_url,
               'email', u2.email,
@@ -38,7 +38,7 @@ class MessageService {
             )
           ELSE 
             jsonb_build_object(
-              'id', u1.firebase_uid,
+              'id', u1.user_id,
               'name', u1.full_name,
               'avatar', u1.profile_image_url,
               'email', u1.email,
@@ -46,8 +46,8 @@ class MessageService {
             )
         END as other_user
       FROM conversations c
-      LEFT JOIN users u1 ON c.participant1_id = u1.firebase_uid
-      LEFT JOIN users u2 ON c.participant2_id = u2.firebase_uid
+      LEFT JOIN users u1 ON c.participant1_id = u1.user_id
+      LEFT JOIN users u2 ON c.participant2_id = u2.user_id
       WHERE c.id = $1 AND (c.participant1_id = $2 OR c.participant2_id = $2)`,
       [conversationId, currentUserId]
     );
@@ -78,7 +78,7 @@ class MessageService {
         CASE 
           WHEN c.participant1_id = $1 THEN 
             jsonb_build_object(
-              'id', u2.firebase_uid,
+              'id', u2.user_id,
               'name', u2.full_name,
               'avatar', u2.profile_image_url,
               'email', u2.email,
@@ -86,7 +86,7 @@ class MessageService {
             )
           ELSE 
             jsonb_build_object(
-              'id', u1.firebase_uid,
+              'id', u1.user_id,
               'name', u1.full_name,
               'avatar', u1.profile_image_url,
               'email', u1.email,
@@ -100,8 +100,8 @@ class MessageService {
            AND is_read = false), 0
         ) as unread_count
       FROM conversations c
-      LEFT JOIN users u1 ON c.participant1_id = u1.firebase_uid
-      LEFT JOIN users u2 ON c.participant2_id = u2.firebase_uid
+      LEFT JOIN users u1 ON c.participant1_id = u1.user_id
+      LEFT JOIN users u2 ON c.participant2_id = u2.user_id
       WHERE c.participant1_id = $1 OR c.participant2_id = $1
       ORDER BY c.updated_at DESC`,
       [userId]
@@ -197,20 +197,20 @@ class MessageService {
   }
   
   async updateUserStatus(userId, isOnline) {
-  const result = await pool.query(
-    `INSERT INTO user_status (user_id, is_online, last_seen)
-     VALUES ($1, $2, CURRENT_TIMESTAMP)
-     ON CONFLICT (user_id)
-     DO UPDATE SET 
-       is_online = $2,
-       last_seen = CASE WHEN $2 = false THEN CURRENT_TIMESTAMP ELSE user_status.last_seen END,
-       updated_at = CURRENT_TIMESTAMP
-     RETURNING *`,
-    [userId, isOnline]
-  );
-  
-  return result.rows[0];
-}
+    const result = await pool.query(
+      `INSERT INTO user_status (user_id, is_online, last_seen)
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id)
+       DO UPDATE SET 
+         is_online = $2,
+         last_seen = CASE WHEN $2 = false THEN CURRENT_TIMESTAMP ELSE user_status.last_seen END,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [userId, isOnline]
+    );
+    
+    return result.rows[0];
+  }
   
   async getUserStatus(userId) {
     const result = await pool.query(

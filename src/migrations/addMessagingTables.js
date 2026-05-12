@@ -15,8 +15,8 @@ async function addMessagingTables() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversations (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        participant1_id VARCHAR(128) NOT NULL REFERENCES users(firebase_uid) ON DELETE CASCADE,
-        participant2_id VARCHAR(128) NOT NULL REFERENCES users(firebase_uid) ON DELETE CASCADE,
+        participant1_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        participant2_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
         last_message TEXT,
         last_message_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_message_sender_id VARCHAR(128),
@@ -33,8 +33,8 @@ async function addMessagingTables() {
       CREATE TABLE IF NOT EXISTS messages (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        sender_id VARCHAR(128) NOT NULL REFERENCES users(firebase_uid) ON DELETE CASCADE,
-        receiver_id VARCHAR(128) NOT NULL REFERENCES users(firebase_uid) ON DELETE CASCADE,
+        sender_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        receiver_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
         message_text TEXT NOT NULL,
         is_read BOOLEAN DEFAULT false,
         read_at TIMESTAMP,
@@ -46,7 +46,7 @@ async function addMessagingTables() {
     // Create user_status table for online/offline tracking
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_status (
-        user_id VARCHAR(128) PRIMARY KEY REFERENCES users(firebase_uid) ON DELETE CASCADE,
+        user_id VARCHAR(128) PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
         is_online BOOLEAN DEFAULT false,
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

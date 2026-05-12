@@ -97,6 +97,7 @@ async function getPropertyById(propertyId) {
       p.*,
       jsonb_build_object(
         'id', u.id,
+        'user_id', u.user_id,
         'full_name', u.full_name,
         'email', u.email,
         'phone_number', u.phone_number,
@@ -116,11 +117,11 @@ async function getPropertyById(propertyId) {
         '[]'
       ) as amenities
     FROM properties p
-    LEFT JOIN users u ON p.owner_id = u.firebase_uid
+    LEFT JOIN users u ON p.owner_id = u.user_id
     LEFT JOIN property_media pm ON p.id = pm.property_id
     LEFT JOIN property_amenities pa ON p.id = pa.property_id
     WHERE p.id = $1
-    GROUP BY p.id, u.id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+    GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
     `,
     [propertyId]
   );
@@ -134,6 +135,7 @@ async function getAllProperties(filters = {}) {
       p.*,
       jsonb_build_object(
         'id', u.id,
+        'user_id', u.user_id,
         'full_name', u.full_name,
         'profile_image_url', u.profile_image_url,
         'rating', u.rating
@@ -151,7 +153,7 @@ async function getAllProperties(filters = {}) {
         '[]'
       ) as amenities
     FROM properties p
-    LEFT JOIN users u ON p.owner_id = u.firebase_uid
+    LEFT JOIN users u ON p.owner_id = u.user_id
     LEFT JOIN property_media pm ON p.id = pm.property_id
     LEFT JOIN property_amenities pa ON p.id = pa.property_id
     WHERE 1=1
@@ -184,7 +186,7 @@ async function getAllProperties(filters = {}) {
     paramIndex++;
   }
   
-  query += ` GROUP BY p.id, u.id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
+  query += ` GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
   
   const result = await pool.query(query, values);
   return result.rows;

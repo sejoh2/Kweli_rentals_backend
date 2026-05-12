@@ -1,352 +1,203 @@
 const userService = require("../services/user.service");
-const emailService = require("../services/email.service");
+const smsService = require("../services/sms.service");
 const documentService = require("../services/document.service");
-const { admin, signUpWithEmailPassword, signInWithEmailPassword, refreshFirebaseToken } = require("../config/firebase");
+const { generateToken } = require("../middleware/auth");
+const { v4: uuidv4 } = require("uuid");
 
-// Sign Up with Email and Password (NO TOKEN ISSUED)
-const signUp = async (req, res) => {
-  try {
-    const { email, password, full_name, phone_number, role = 'home_finder' } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
-    
-    if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-    
-    // Check if user already exists in database
-    const existingUser = await userService.getUserByEmail(email);
-    if (existingUser) {
-      if (!existingUser.email_verified) {
-        await emailService.sendVerificationCode(email, existingUser.full_name);
-        return res.status(200).json({
-          success: true,
-          message: "Account exists but not verified. A new verification code has been sent to your email.",
-          requires_verification: true,
-          email: email
-        });
-      } else {
-        return res.status(400).json({ error: "Email already registered. Please sign in." });
-      }
-    }
-    
-    const firebaseUser = await signUpWithEmailPassword(email, password, full_name);
-    
-    const userData = {
-      uid: firebaseUser.localId,
-      email: firebaseUser.email,
-      full_name: full_name || email.split('@')[0],
-      phone_number: phone_number || null,
-      role: role,
-      email_verified: false,
-      auth_provider: 'email',
-      documents_submitted: false,
-      was_rejected: false
-    };
-    
-    const dbUser = await userService.createOrUpdateUserFromSignup(userData);
-    
-    const emailResult = await emailService.sendVerificationCode(email, full_name || email.split('@')[0]);
-    
-    if (!emailResult.success) {
-      return res.status(500).json({ error: "Failed to send verification email" });
-    }
-    
-    res.status(201).json({
-      success: true,
-      message: "User registered successfully. A verification code has been sent to your email.",
-      requires_verification: true,
-      email: email,
-      user: {
-        id: dbUser.id,
-        email: dbUser.email,
-        full_name: dbUser.full_name,
-        phone_number: dbUser.phone_number,
-        role: dbUser.role,
-        profile_image_url: dbUser.profile_image_url,
-        email_verified: false
-      }
-    });
-    
-  } catch (error) {
-    console.error("Sign up error:", error.message);
-    res.status(400).json({ error: error.message || "Failed to create user account" });
-  }
+// Helper to generate unique user ID
+const generateUserId = () => {
+  return `user_${uuidv4()}`;
 };
 
-// Sign In with Email and Password
-const signIn = async (req, res) => {
+// Valid roles
+const VALID_ROLES = ['home_finder', 'landlord', 'agent', 'movers'];
+
+// ==================== PHONE NUMBER AUTHENTICATION ====================
+
+// Step 1: Send OTP to phone number
+const sendOTP = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { phone_number, full_name } = req.body;
     
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
+    if (!phone_number) {
+      return res.status(400).json({ error: "Phone number is required" });
     }
     
-    const dbUser = await userService.getUserByEmail(email);
+    // Clean phone number (remove spaces, dashes)
+    const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
     
-    if (!dbUser) {
-      return res.status(401).json({ error: "User not found. Please register first." });
-    }
+    // Check if user exists
+    let existingUser = await userService.getUserByPhoneNumber(cleanedPhone);
     
-    if (!dbUser.email_verified) {
-      await emailService.sendVerificationCode(email, dbUser.full_name);
-      return res.status(403).json({ 
-        error: "Email not verified. A new verification code has been sent to your email.",
-        requires_verification: true,
-        email: dbUser.email
-      });
-    }
-    
-    const firebaseUser = await signInWithEmailPassword(email, password);
-    await userService.updateLastLogin(firebaseUser.localId);
-    const verifiedUser = await userService.getUserByFirebaseUid(firebaseUser.localId);
+    // Send OTP
+    const result = await smsService.sendVerificationOTP(cleanedPhone, full_name || 'User');
     
     res.json({
       success: true,
-      message: "Signed in successfully",
-      user: {
-        id: verifiedUser.id,
-        email: verifiedUser.email,
-        full_name: verifiedUser.full_name,
-        phone_number: verifiedUser.phone_number,
-        role: verifiedUser.role,
-        profile_image_url: verifiedUser.profile_image_url,
-        location: verifiedUser.location,
-        total_listings: verifiedUser.total_listings,
-        email_verified: verifiedUser.email_verified,
-        is_verified: verifiedUser.is_verified,
-        verification_status: verifiedUser.verification_status,
-        was_rejected: verifiedUser.was_rejected,
-        rejection_reason: verifiedUser.rejection_reason
-      },
-      token: firebaseUser.idToken,
-      refreshToken: firebaseUser.refreshToken
+      message: "Verification code sent to your phone number",
+      phone_number: cleanedPhone,
+      sandbox_mode: result.sandboxMode,
+      is_new_user: !existingUser
     });
     
   } catch (error) {
-    console.error("Sign in error:", error.message);
-    res.status(401).json({ error: "Invalid email or password" });
+    console.error("Send OTP error:", error.message);
+    res.status(500).json({ error: error.message || "Failed to send verification code" });
   }
 };
 
-// Resend verification code
-const resendVerificationCode = async (req, res) => {
+// Step 2: Verify OTP and create/authenticate user
+const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { phone_number, code, full_name, role, email } = req.body;
     
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
+    if (!phone_number || !code) {
+      return res.status(400).json({ error: "Phone number and verification code are required" });
     }
     
-    const user = await userService.getUserByEmail(email);
-    if (!user) {
-      return res.status(404).json({ error: "User not found. Please sign up first." });
-    }
+    const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
     
-    if (user.email_verified) {
-      return res.status(400).json({ error: "Email already verified. Please sign in." });
-    }
-    
-    const result = await emailService.sendVerificationCode(email, user.full_name);
-    
-    if (result.success) {
-      res.json({ 
-        success: true, 
-        message: "Verification code sent successfully",
-        email: email
-      });
-    } else {
-      res.status(500).json({ error: "Failed to send verification code" });
-    }
-  } catch (error) {
-    console.error("Error resending verification code:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Verify email code - MANUAL SIGN-IN
-const verifyEmailCode = async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    
-    if (!email || !code) {
-      return res.status(400).json({ error: "Email and verification code are required" });
-    }
-    
-    const verificationResult = emailService.verifyCode(email, code);
+    // Verify OTP
+    const verificationResult = smsService.verifyOTP(cleanedPhone, code);
     
     if (!verificationResult.success) {
       return res.status(400).json({ error: verificationResult.error });
     }
     
-    const user = await userService.getUserByEmail(email);
+    // Check if user exists
+    let user = await userService.getUserByPhoneNumber(cleanedPhone);
+    
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      // NEW USER - Validate required fields
+      
+      // Check if name was provided
+      if (!full_name || full_name.trim() === '') {
+        return res.status(400).json({ 
+          success: false,
+          error: "Full name is required",
+          message: "Please provide your full name to complete registration",
+          is_new_user: true
+        });
+      }
+      
+      // Check if role was provided and is valid
+      if (!role) {
+        return res.status(400).json({ 
+          success: false,
+          error: "Role is required",
+          message: "Please select a role to complete registration",
+          valid_roles: VALID_ROLES,
+          is_new_user: true
+        });
+      }
+      
+      if (!VALID_ROLES.includes(role)) {
+        return res.status(400).json({ 
+          success: false,
+          error: "Invalid role",
+          message: `Role must be one of: ${VALID_ROLES.join(', ')}`,
+          valid_roles: VALID_ROLES,
+          is_new_user: true
+        });
+      }
+      
+      // Create new user with provided name and role
+      const userId = generateUserId();
+      const userData = {
+        user_id: userId,
+        phone_number: cleanedPhone,
+        full_name: full_name.trim(),
+        email: email || null,
+        role: role,
+        phone_verified: true,
+        auth_provider: 'phone'
+      };
+      
+      user = await userService.createUserFromPhoneSignup(userData);
+      
+      // Send welcome SMS
+      await smsService.sendWelcomeSMS(cleanedPhone, user.full_name);
+      
+      console.log(`✅ New user created: ${user.full_name} (${user.role}) - ${user.phone_number}`);
+    } else {
+      // Existing user - update last login and ensure phone is verified
+      await userService.updateLastLogin(user.user_id);
+      if (!user.phone_verified) {
+        await userService.verifyPhoneNumber(cleanedPhone);
+        user = await userService.getUserByPhoneNumber(cleanedPhone);
+      }
+      console.log(`✅ Existing user logged in: ${user.full_name} (${user.role}) - ${user.phone_number}`);
     }
     
-    let updatedUser = await userService.verifyUserEmail(email);
-    
-    if (updatedUser.role === 'home_finder') {
-      await userService.updateVerificationStatus(updatedUser.firebase_uid, 'verified');
-      updatedUser = await userService.getUserByEmail(email);
-    }
-    
-    await emailService.sendWelcomeEmail(email, updatedUser.full_name);
+    // Generate JWT token
+    const token = generateToken(user);
     
     res.json({
       success: true,
-      message: "Email verified successfully! You can now sign in.",
+      message: "Authentication successful",
       user: {
-        id: updatedUser.id,
-        email: updatedUser.email,
-        full_name: updatedUser.full_name,
-        phone_number: updatedUser.phone_number,
-        role: updatedUser.role,
-        profile_image_url: updatedUser.profile_image_url,
-        location: updatedUser.location,
-        total_listings: updatedUser.total_listings,
-        email_verified: updatedUser.email_verified,
-        is_verified: updatedUser.is_verified,
-        verification_status: updatedUser.verification_status
-      }
+        id: user.id,
+        user_id: user.user_id,
+        full_name: user.full_name,
+        phone_number: user.phone_number,
+        email: user.email,
+        role: user.role,
+        profile_image_url: user.profile_image_url,
+        location: user.location,
+        total_listings: user.total_listings,
+        phone_verified: user.phone_verified,
+        is_verified: user.is_verified,
+        verification_status: user.verification_status,
+        was_rejected: user.was_rejected,
+        rejection_reason: user.rejection_reason
+      },
+      token: token
     });
+    
   } catch (error) {
-    console.error("Error verifying code:", error);
+    console.error("Verify OTP error:", error.message);
+    res.status(500).json({ error: error.message || "Failed to verify code" });
+  }
+};
+
+// Resend OTP
+const resendOTP = async (req, res) => {
+  try {
+    const { phone_number } = req.body;
+    
+    if (!phone_number) {
+      return res.status(400).json({ error: "Phone number is required" });
+    }
+    
+    const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
+    
+    const result = await smsService.sendVerificationOTP(cleanedPhone);
+    
+    res.json({
+      success: true,
+      message: "Verification code resent successfully",
+      sandbox_mode: result.sandboxMode
+    });
+    
+  } catch (error) {
+    console.error("Resend OTP error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// Request password reset code
-const forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    
-    const user = await userService.getUserByEmail(email);
-    if (!user) {
-      return res.status(404).json({ 
-        error: "No account found with this email address",
-        code: "USER_NOT_FOUND"
-      });
-    }
-    
-    if (!user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first before resetting your password.",
-        code: "EMAIL_NOT_VERIFIED"
-      });
-    }
-    
-    const result = await emailService.sendPasswordResetCode(email, user.full_name);
-    
-    if (!result.success) {
-      return res.status(500).json({ 
-        error: "Failed to send reset code. Please try again later.",
-        code: "EMAIL_SEND_FAILED"
-      });
-    }
-    
-    res.json({ 
-      success: true, 
-      message: "Password reset code sent to your email",
-      code: "SUCCESS"
-    });
-    
-  } catch (error) {
-    console.error("Error sending password reset code:", error);
-    res.status(500).json({ 
-      error: "Something went wrong. Please try again later.",
-      code: "INTERNAL_ERROR"
-    });
-  }
+// Logout (just invalidate token on client side)
+const logout = async (req, res) => {
+  res.json({
+    success: true,
+    message: "Logged out successfully"
+  });
 };
 
-// Reset password with code
-const resetPassword = async (req, res) => {
-  try {
-    const { email, code, newPassword } = req.body;
-    
-    if (!email || !code || !newPassword) {
-      return res.status(400).json({ error: "Email, code, and new password are required" });
-    }
-    
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-    
-    const user = await userService.getUserByEmail(email);
-    if (!user) {
-      return res.status(404).json({ 
-        error: "No account found with this email address",
-        code: "USER_NOT_FOUND"
-      });
-    }
-    
-    const verificationResult = emailService.verifyPasswordResetCode(email, code);
-    
-    if (!verificationResult.success) {
-      return res.status(400).json({ 
-        error: verificationResult.error,
-        code: "INVALID_CODE"
-      });
-    }
-    
-    const firebaseUser = await admin.auth().getUserByEmail(email);
-    await admin.auth().updateUser(firebaseUser.uid, { password: newPassword });
-    
-    res.json({ 
-      success: true, 
-      message: "Password reset successfully. You can now sign in with your new password." 
-    });
-    
-  } catch (error) {
-    console.error("Error resetting password:", error);
-    res.status(500).json({ 
-      error: "Something went wrong. Please try again later.",
-      code: "INTERNAL_ERROR"
-    });
-  }
-};
-
-// Refresh Token
-const refreshToken = async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-    
-    if (!refreshToken) {
-      return res.status(400).json({ error: "Refresh token is required" });
-    }
-    
-    const tokens = await refreshFirebaseToken(refreshToken);
-    
-    res.json({
-      success: true,
-      token: tokens.idToken,
-      refreshToken: tokens.refreshToken,
-      expiresIn: tokens.expiresIn
-    });
-    
-  } catch (error) {
-    console.error("Token refresh error:", error.message);
-    res.status(401).json({ error: "Failed to refresh token" });
-  }
-};
+// ==================== USER PROFILE ====================
 
 // Get current user profile
 const getCurrentUser = async (req, res) => {
   try {
-    if (!req.user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first.",
-        requires_verification: true
-      });
-    }
     res.json({ success: true, user: req.user });
   } catch (error) {
     console.error("Error getting current user:", error);
@@ -354,11 +205,11 @@ const getCurrentUser = async (req, res) => {
   }
 };
 
-// Get public user profile by UID
+// Get public user profile by user_id
 const getPublicUserProfile = async (req, res) => {
   try {
     const { uid } = req.params;
-    const user = await userService.getUserByFirebaseUid(uid);
+    const user = await userService.getUserByUserId(uid);
     
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -368,6 +219,7 @@ const getPublicUserProfile = async (req, res) => {
       success: true,
       user: {
         id: user.id,
+        user_id: user.user_id,
         full_name: user.full_name,
         profile_image_url: user.profile_image_url,
         location: user.location,
@@ -385,30 +237,54 @@ const getPublicUserProfile = async (req, res) => {
 };
 
 // Update user profile
+// Update user profile (handles both JSON and file upload)
 const updateUserProfile = async (req, res) => {
   try {
-    if (!req.user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first.",
-        requires_verification: true
-      });
+    const userId = req.user.user_id;
+    const updates = {};
+    
+    console.log("Request body:", req.body);
+    console.log("Request file:", req.file);
+    
+    // Check if it's a file upload (multipart/form-data has req.file)
+    if (req.file) {
+      // File upload - handle profile image
+      const mediaService = require("../services/media.service");
+      const imageUrl = await mediaService.uploadMedia(req.file);
+      updates.profile_image_url = imageUrl;
     }
     
-    const { full_name, phone_number, location, profile_image_url } = req.body;
-    const firebaseUid = req.user.firebase_uid;
+    // Handle text fields (works for both JSON and form-data)
+    // Check if body exists and extract values
+    if (req.body) {
+      if (req.body.full_name !== undefined && req.body.full_name !== null && req.body.full_name !== '') {
+        updates.full_name = req.body.full_name;
+      }
+      if (req.body.email !== undefined && req.body.email !== null && req.body.email !== '') {
+        updates.email = req.body.email;
+      }
+      if (req.body.location !== undefined && req.body.location !== null && req.body.location !== '') {
+        updates.location = req.body.location;
+      }
+      if (req.body.profile_image_url !== undefined && req.body.profile_image_url !== null && req.body.profile_image_url !== '') {
+        updates.profile_image_url = req.body.profile_image_url;
+      }
+    }
     
-    const updatedUser = await userService.updateUserProfile(firebaseUid, {
-      full_name,
-      phone_number,
-      location,
-      profile_image_url
-    });
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    
+    console.log("Updates to apply:", updates);
+    
+    const updatedUser = await userService.updateUserProfile(userId, updates);
     
     res.json({
       success: true,
       message: "Profile updated successfully",
       user: updatedUser
     });
+    
   } catch (error) {
     console.error("Error updating user profile:", error);
     res.status(500).json({ error: error.message });
@@ -431,11 +307,11 @@ const uploadProfileImage = async (req, res) => {
 
     const pool = require("../config/db");
     await pool.query(
-      `UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE firebase_uid = $2`,
-      [imageUrl, req.user.firebase_uid]
+      `UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE user_id = $2`,
+      [imageUrl, req.user.user_id]
     );
 
-    const updatedUser = await userService.getUserByFirebaseUid(req.user.firebase_uid);
+    const updatedUser = await userService.getUserByUserId(req.user.user_id);
 
     res.json({
       success: true,
@@ -457,18 +333,19 @@ const updateUserRole = async (req, res) => {
       return res.status(403).json({ error: "Only admins can update user roles" });
     }
     
-    const updatedUser = await userService.updateUserRole(userId, role);
-    
-    if (role === 'admin' && !updatedUser.is_verified) {
-      await userService.syncAdminVerification(updatedUser.firebase_uid);
+    if (!VALID_ROLES.includes(role)) {
+      return res.status(400).json({ 
+        error: "Invalid role", 
+        valid_roles: VALID_ROLES 
+      });
     }
     
-    const finalUser = await userService.getUserByFirebaseUid(userId);
+    const updatedUser = await userService.updateUserRole(userId, role);
     
     res.json({
       success: true,
       message: `Role updated to ${role}`,
-      user: finalUser
+      user: updatedUser
     });
   } catch (error) {
     console.error("Error updating user role:", error);
@@ -479,14 +356,7 @@ const updateUserRole = async (req, res) => {
 // Submit verification request (Landlord/Agent/Movers only)
 const submitVerification = async (req, res) => {
   try {
-    if (!req.user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first.",
-        requires_verification: true
-      });
-    }
-    
-    const firebaseUid = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const allowedRoles = ['landlord', 'agent', 'movers'];
     
     if (!allowedRoles.includes(req.user.role)) {
@@ -497,9 +367,8 @@ const submitVerification = async (req, res) => {
       return res.status(400).json({ error: "User is already verified" });
     }
     
-    const updated = await userService.updateVerificationStatus(firebaseUid, 'in_progress');
+    const updated = await userService.updateVerificationStatus(userId, 'in_progress');
     
-    // Reset rejection flags when user resubmits
     const pool = require("../config/db");
     await pool.query(
       `UPDATE users 
@@ -507,8 +376,8 @@ const submitVerification = async (req, res) => {
            rejection_reason = NULL,
            documents_submitted = true,
            updated_at = NOW()
-       WHERE firebase_uid = $1`,
-      [firebaseUid]
+       WHERE user_id = $1`,
+      [userId]
     );
     
     res.json({
@@ -529,21 +398,14 @@ const uploadVerificationDocuments = async (req, res) => {
   const pool = require("../config/db");
   
   try {
-    if (!req.user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first.",
-        requires_verification: true
-      });
-    }
-    
-    const firebaseUid = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const allowedRoles = ['landlord', 'agent', 'movers'];
     
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ error: "Only landlords, agents, and movers can upload verification documents" });
     }
     
-    const user = await userService.getUserByFirebaseUid(firebaseUid);
+    const user = await userService.getUserByUserId(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -595,13 +457,12 @@ const uploadVerificationDocuments = async (req, res) => {
     }
     
     if (req.user.verification_status === 'not_verified') {
-      await userService.updateVerificationStatus(firebaseUid, 'in_progress');
+      await userService.updateVerificationStatus(userId, 'in_progress');
     }
     
-    // Mark that user has submitted documents
     await pool.query(
-      `UPDATE users SET documents_submitted = true WHERE firebase_uid = $1`,
-      [firebaseUid]
+      `UPDATE users SET documents_submitted = true WHERE user_id = $1`,
+      [userId]
     );
     
     res.json({
@@ -650,8 +511,10 @@ const getVerificationDocuments = async (req, res) => {
       success: true,
       user: {
         id: user.id,
+        user_id: user.user_id,
         email: user.email,
         full_name: user.full_name,
+        phone_number: user.phone_number,
         role: user.role,
         verification_status: user.verification_status,
         is_verified: user.is_verified,
@@ -691,7 +554,7 @@ const approveVerificationWithDocs = async (req, res) => {
       return res.status(400).json({ error: "User is already verified" });
     }
     
-    const updated = await userService.updateVerificationStatus(userToVerify.firebase_uid, 'verified');
+    const updated = await userService.updateVerificationStatus(userToVerify.user_id, 'verified');
     
     if (notes) {
       const pool = require("../config/db");
@@ -707,8 +570,10 @@ const approveVerificationWithDocs = async (req, res) => {
       message: `User ${userToVerify.full_name} has been verified successfully`,
       user: {
         id: userToVerify.id,
+        user_id: userToVerify.user_id,
         full_name: userToVerify.full_name,
         email: userToVerify.email,
+        phone_number: userToVerify.phone_number,
         is_verified: updated.is_verified,
         verification_status: updated.verification_status
       }
@@ -731,7 +596,7 @@ const rejectVerificationWithCleanup = async (req, res) => {
       return res.status(403).json({ error: "Only admins can reject verification" });
     }
     
-    const userToReject = await userService.getUserByFirebaseUid(userId);
+    const userToReject = await userService.getUserById(userId);
     
     if (!userToReject) {
       return res.status(404).json({ error: "User not found" });
@@ -739,15 +604,17 @@ const rejectVerificationWithCleanup = async (req, res) => {
     
     await documentService.deleteAllUserDocuments(userToReject.id, pool);
     
-    const updated = await userService.updateVerificationStatus(userId, 'not_verified');
+    const updated = await userService.updateVerificationStatus(userToReject.user_id, 'not_verified');
     
     res.json({
       success: true,
       message: `Verification rejected for ${userToReject.full_name}${reason ? `: ${reason}` : ''} and documents deleted.`,
       user: {
         id: userToReject.id,
+        user_id: userToReject.user_id,
         full_name: userToReject.full_name,
         email: userToReject.email,
+        phone_number: userToReject.phone_number,
         is_verified: updated.is_verified,
         verification_status: updated.verification_status
       }
@@ -759,8 +626,6 @@ const rejectVerificationWithCleanup = async (req, res) => {
   }
 };
 
-// ==================== APPROVE/REJECT VERIFICATION (ORIGINAL) ====================
-
 const approveVerification = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -769,7 +634,7 @@ const approveVerification = async (req, res) => {
       return res.status(403).json({ error: "Only admins can approve verification" });
     }
     
-    const userToVerify = await userService.getUserByFirebaseUid(userId);
+    const userToVerify = await userService.getUserByUserId(userId);
     
     if (!userToVerify) {
       return res.status(404).json({ error: "User not found" });
@@ -791,8 +656,10 @@ const approveVerification = async (req, res) => {
       message: `User ${userToVerify.full_name} has been verified successfully`,
       user: {
         id: userToVerify.id,
+        user_id: userToVerify.user_id,
         full_name: userToVerify.full_name,
         email: userToVerify.email,
+        phone_number: userToVerify.phone_number,
         is_verified: updated.is_verified,
         verification_status: updated.verification_status
       }
@@ -814,13 +681,12 @@ const rejectVerification = async (req, res) => {
       return res.status(403).json({ error: "Only admins can reject verification" });
     }
     
-    const userToReject = await userService.getUserByFirebaseUid(userId);
+    const userToReject = await userService.getUserByUserId(userId);
     
     if (!userToReject) {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // Update status and track rejection (documents remain)
     await pool.query(
       `UPDATE users 
        SET verification_status = 'not_verified',
@@ -828,20 +694,22 @@ const rejectVerification = async (req, res) => {
            rejection_reason = $1,
            rejected_at = NOW(),
            updated_at = NOW()
-       WHERE firebase_uid = $2
+       WHERE user_id = $2
        RETURNING *`,
       [reason || 'No reason provided', userId]
     );
     
-    const updated = await userService.getUserByFirebaseUid(userId);
+    const updated = await userService.getUserByUserId(userId);
     
     res.json({
       success: true,
       message: `Verification rejected for ${userToReject.full_name}${reason ? `: ${reason}` : ''}`,
       user: {
         id: userToReject.id,
+        user_id: userToReject.user_id,
         full_name: userToReject.full_name,
         email: userToReject.email,
+        phone_number: userToReject.phone_number,
         is_verified: updated.is_verified,
         verification_status: updated.verification_status,
         was_rejected: true,
@@ -860,23 +728,12 @@ const getPendingVerifications = async (req, res) => {
       return res.status(403).json({ error: "Only admins can view pending verifications" });
     }
     
-    const pool = require("../config/db");
-    const result = await pool.query(
-      `
-      SELECT id, firebase_uid, email, full_name, phone_number, 
-             profile_image_url, created_at, updated_at
-      FROM users 
-      WHERE role IN ('landlord', 'agent', 'movers')
-        AND verification_status = 'in_progress'
-        AND is_verified = false
-      ORDER BY updated_at ASC
-      `
-    );
+    const pending = await userService.getPendingVerifications();
     
     res.json({
       success: true,
-      count: result.rows.length,
-      pending_verifications: result.rows
+      count: pending.length,
+      pending_verifications: pending
     });
   } catch (error) {
     console.error("Error getting pending verifications:", error);
@@ -886,15 +743,8 @@ const getPendingVerifications = async (req, res) => {
 
 const updateListingsCount = async (req, res) => {
   try {
-    if (!req.user.email_verified) {
-      return res.status(403).json({ 
-        error: "Email not verified. Please verify your email first.",
-        requires_verification: true
-      });
-    }
-    
-    const firebaseUid = req.user.firebase_uid;
-    const totalListings = await userService.updateLandlordListingsCount(firebaseUid);
+    const userId = req.user.user_id;
+    const totalListings = await userService.updateLandlordListingsCount(userId);
     
     res.json({
       success: true,
@@ -902,22 +752,6 @@ const updateListingsCount = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating listings count:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const logout = async (req, res) => {
-  try {
-    if (req.firebaseUser) {
-      await admin.auth().revokeRefreshTokens(req.firebaseUser.uid);
-    }
-    
-    res.json({
-      success: true,
-      message: "Logged out successfully"
-    });
-  } catch (error) {
-    console.error("Error during logout:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -944,13 +778,13 @@ const getAllUsers = async (req, res) => {
 
 const deactivateUser = async (req, res) => {
   try {
-    const { firebaseUid } = req.params;
+    const { userId } = req.params;
     
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Only admins can deactivate users" });
     }
     
-    const deactivatedUser = await userService.deactivateUser(firebaseUid);
+    const deactivatedUser = await userService.deactivateUser(userId);
     
     if (!deactivatedUser) {
       return res.status(404).json({ error: "User not found" });
@@ -968,28 +802,29 @@ const deactivateUser = async (req, res) => {
 };
 
 module.exports = {
-  signUp,
-  signIn,
-  resendVerificationCode,
-  verifyEmailCode,
-  forgotPassword,
-  resetPassword,
-  refreshToken,
+  // Phone OTP auth methods
+  sendOTP,
+  verifyOTPAndLogin,
+  resendOTP,
+  logout,
+  
+  // User profile methods
   getCurrentUser,
   getPublicUserProfile,
   updateUserProfile,
-  uploadProfileImage, 
+  uploadProfileImage,
   updateUserRole,
   submitVerification,
-  approveVerification,
-  rejectVerification,
-  getPendingVerifications,
   updateListingsCount,
-  logout,
   getAllUsers,
   deactivateUser,
+  
+  // Document verification methods
   uploadVerificationDocuments,
   getVerificationDocuments,
   approveVerificationWithDocs,
-  rejectVerificationWithCleanup
+  rejectVerificationWithCleanup,
+  approveVerification,
+  rejectVerification,
+  getPendingVerifications
 };

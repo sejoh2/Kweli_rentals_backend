@@ -1,5 +1,31 @@
-const { verifyFirebaseToken } = require("../config/firebase");
+const jwt = require('jsonwebtoken');
 const userService = require("../services/user.service");
+
+// Generate JWT token for authenticated user
+const generateToken = (user) => {
+  const payload = {
+    id: user.id,
+    user_id: user.user_id,
+    phone_number: user.phone_number,
+    email: user.email,
+    role: user.role,
+    is_verified: user.is_verified,
+    phone_verified: user.phone_verified
+  };
+  
+  return jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  });
+};
+
+// Verify JWT token
+const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    throw new Error('Invalid or expired token');
+  }
+};
 
 // Main authentication middleware
 const authenticate = async (req, res, next) => {
@@ -13,10 +39,10 @@ const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.split('Bearer ')[1];
-    const decodedToken = await verifyFirebaseToken(token);
+    const decoded = verifyToken(token);
     
-    // Get user from database
-    let user = await userService.getUserByFirebaseUid(decodedToken.uid);
+    // Get user from database using user_id
+    let user = await userService.getUserByUserId(decoded.user_id);
     
     if (!user) {
       return res.status(401).json({ 
@@ -31,8 +57,8 @@ const authenticate = async (req, res, next) => {
       });
     }
     
+    // Attach user to request
     req.user = user;
-    req.firebaseUser = decodedToken;
     
     next();
   } catch (error) {
@@ -67,10 +93,9 @@ const optionalAuth = async (req, res, next) => {
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split('Bearer ')[1];
-      const decodedToken = await verifyFirebaseToken(token);
-      const user = await userService.getUserByFirebaseUid(decodedToken.uid);
+      const decoded = verifyToken(token);
+      const user = await userService.getUserByUserId(decoded.user_id);
       req.user = user;
-      req.firebaseUser = decodedToken;
     } else {
       req.user = null;
     }
@@ -87,4 +112,11 @@ const isAdmin = (req) => {
   return req.user && req.user.role === 'admin';
 };
 
-module.exports = { authenticate, requireRole, optionalAuth, isAdmin };
+module.exports = { 
+  authenticate, 
+  requireRole, 
+  optionalAuth, 
+  isAdmin,
+  generateToken,
+  verifyToken
+};

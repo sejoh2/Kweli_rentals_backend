@@ -3,7 +3,7 @@ const { getIO } = require("../services/websocket.service");
 
 const getConversations = async (req, res) => {
   try {
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const conversations = await messageService.getUserConversations(userId);
     
     res.json({
@@ -19,7 +19,7 @@ const getConversations = async (req, res) => {
 const getConversationById = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     
     const conversation = await messageService.getConversationById(conversationId, userId);
     
@@ -40,7 +40,7 @@ const getConversationById = async (req, res) => {
 const getMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
     
@@ -65,7 +65,7 @@ const getMessages = async (req, res) => {
 const sendMessage = async (req, res) => {
   try {
     const { receiverId, message } = req.body;
-    const senderId = req.user.firebase_uid;
+    const senderId = req.user.user_id;
     
     if (!receiverId || !message) {
       return res.status(400).json({ error: "Receiver ID and message are required" });
@@ -113,7 +113,7 @@ const sendMessage = async (req, res) => {
 const markAsRead = async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     
     const count = await messageService.markMessagesAsRead(conversationId, userId);
     
@@ -144,7 +144,7 @@ const markAsRead = async (req, res) => {
 
 const getUnreadCount = async (req, res) => {
   try {
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const count = await messageService.getUnreadCount(userId);
     
     res.json({
@@ -159,7 +159,7 @@ const getUnreadCount = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
-    const userId = req.user.firebase_uid;
+    const userId = req.user.user_id;
     const { is_online } = req.body;
     
     if (typeof is_online !== 'boolean') {
