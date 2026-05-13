@@ -20,11 +20,12 @@ async function initTables() {
     console.log(`${colors.green}✅ UUID extension enabled${colors.reset}`);
 
     // Create users table - Phone number authentication only (NO Firebase, NO email/password)
+    // Allow multiple accounts per phone number (different roles)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         user_id VARCHAR(128) UNIQUE NOT NULL,
-        phone_number VARCHAR(20) UNIQUE NOT NULL,
+        phone_number VARCHAR(20) NOT NULL,
         phone_verified BOOLEAN DEFAULT false,
         full_name VARCHAR(255) NOT NULL,
         email VARCHAR(255) UNIQUE,
@@ -49,7 +50,7 @@ async function initTables() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    console.log(`${colors.green}✅ Users table created (Phone + OTP authentication only)${colors.reset}`);
+    console.log(`${colors.green}✅ Users table created (Phone + OTP authentication only - multiple accounts per phone allowed)${colors.reset}`);
 
     // Create verification_documents table
     await pool.query(`
@@ -186,12 +187,38 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ Created auto-verify admin trigger${colors.reset}`);
 
+    // ==================== MIGRATION FOR EXISTING DATABASES ====================
+    console.log(`${colors.yellow}📝 Running migrations for existing databases...${colors.reset}`);
+    
+    // Remove UNIQUE constraint from phone_number to allow multiple accounts per phone
+    await pool.query(`
+      DO $$
+      BEGIN
+        -- Drop the unique constraint on phone_number if it exists
+        IF EXISTS (SELECT 1 FROM pg_constraint 
+          WHERE conname = 'users_phone_number_unique') THEN
+          ALTER TABLE users DROP CONSTRAINT users_phone_number_unique;
+          RAISE NOTICE 'Removed UNIQUE constraint from phone_number';
+        END IF;
+        
+        -- Also drop if it has a different name (fallback)
+        IF EXISTS (SELECT 1 FROM pg_constraint 
+          WHERE conname = 'users_phone_number_key') THEN
+          ALTER TABLE users DROP CONSTRAINT users_phone_number_key;
+          RAISE NOTICE 'Removed UNIQUE constraint from phone_number (key)';
+        END IF;
+      END
+      $$;
+    `);
+    console.log(`${colors.green}✅ Removed UNIQUE constraint from phone_number - multiple accounts per phone now allowed${colors.reset}`);
+
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-    console.log(`${colors.green}✅ ALL TABLES CREATED SUCCESSFULLY!${colors.reset}`);
+    console.log(`${colors.green}✅ ALL TABLES CREATED AND MIGRATED SUCCESSFULLY!${colors.reset}`);
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
     console.log(`${colors.blue}📱 Authentication: Phone Number + OTP (Africa's Talking)${colors.reset}`);
     console.log(`${colors.blue}🔐 No passwords - Pure OTP based authentication${colors.reset}`);
     console.log(`${colors.blue}✅ No Firebase - Completely independent${colors.reset}`);
+    console.log(`${colors.blue}👥 Multiple accounts per phone number - different roles allowed${colors.reset}`);
     console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
 
   } catch (error) {

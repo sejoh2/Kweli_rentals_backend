@@ -49,6 +49,17 @@ async function getUserByPhoneNumber(phoneNumber) {
   return result.rows[0];
 }
 
+// Get user by phone number AND role (for multiple accounts per phone number)
+async function getUserByPhoneNumberAndRole(phoneNumber, role) {
+  const result = await pool.query(
+    `
+    SELECT * FROM users WHERE phone_number = $1 AND role = $2
+    `,
+    [phoneNumber, role]
+  );
+  return result.rows[0];
+}
+
 // Get user by user_id (replaces firebase_uid)
 async function getUserByUserId(userId) {
   const result = await pool.query(
@@ -82,13 +93,24 @@ async function getUserByEmail(email) {
   return result.rows[0];
 }
 
-// Check if phone number exists
+// Check if phone number exists for ANY role
 async function isPhoneNumberExists(phoneNumber) {
   const result = await pool.query(
     `
     SELECT EXISTS(SELECT 1 FROM users WHERE phone_number = $1) as exists
     `,
     [phoneNumber]
+  );
+  return result.rows[0].exists;
+}
+
+// Check if phone number exists for a specific role
+async function isPhoneNumberExistsForRole(phoneNumber, role) {
+  const result = await pool.query(
+    `
+    SELECT EXISTS(SELECT 1 FROM users WHERE phone_number = $1 AND role = $2) as exists
+    `,
+    [phoneNumber, role]
   );
   return result.rows[0].exists;
 }
@@ -417,10 +439,12 @@ module.exports = {
   // User creation & retrieval (Phone OTP)
   createUserFromPhoneSignup,
   getUserByPhoneNumber,
+  getUserByPhoneNumberAndRole,  // NEW - for multiple accounts per phone number
   getUserByUserId,
   getUserById,
   getUserByEmail,
   isPhoneNumberExists,
+  isPhoneNumberExistsForRole,   // NEW - check if phone+role combo exists
   
   // User updates
   updateLastLogin,
