@@ -17,16 +17,23 @@ const VALID_ROLES = ['home_finder', 'landlord', 'agent', 'movers'];
 // Step 1: Send OTP to phone number
 const sendOTP = async (req, res) => {
   try {
-    const { phone_number, full_name } = req.body;
+    const { phone_number, full_name, role } = req.body;
     
     if (!phone_number) {
       return res.status(400).json({ error: "Phone number is required" });
     }
     
+    if (!role) {
+      return res.status(400).json({ error: "Role is required" });
+    }
+    
     // Clean phone number (remove spaces, dashes)
     const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
     
-    // Send OTP - don't block existing phone numbers (they can create multiple role accounts)
+    // Check if user exists with THIS SPECIFIC ROLE
+    const existingUserForRole = await userService.getUserByPhoneNumberAndRole(cleanedPhone, role);
+    
+    // Send OTP
     const result = await smsService.sendVerificationOTP(cleanedPhone, full_name || 'User');
     
     res.json({
@@ -34,8 +41,7 @@ const sendOTP = async (req, res) => {
       message: "Verification code sent to your phone number",
       phone_number: cleanedPhone,
       sandbox_mode: result.sandboxMode,
-      // Always indicate new user since we're creating account for specific role
-      is_new_user: true
+      is_new_user: !existingUserForRole
     });
     
   } catch (error) {
@@ -152,10 +158,14 @@ const verifyOTPAndLogin = async (req, res) => {
 // Resend OTP
 const resendOTP = async (req, res) => {
   try {
-    const { phone_number } = req.body;
+    const { phone_number, role } = req.body;
     
     if (!phone_number) {
       return res.status(400).json({ error: "Phone number is required" });
+    }
+    
+    if (!role) {
+      return res.status(400).json({ error: "Role is required" });
     }
     
     const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
