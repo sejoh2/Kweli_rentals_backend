@@ -6,6 +6,8 @@ const multer = require("multer");
 const upload = multer({ dest: "uploads/" });
 
 // ==================== PUBLIC ROUTES (Phone OTP Authentication) ====================
+// Add this line BEFORE the send-otp route
+router.post("/check-phone", authController.checkPhoneNumber);
 router.post("/send-otp", authController.sendOTP);
 router.post("/verify-otp", authController.verifyOTPAndLogin);
 router.post("/resend-otp", authController.resendOTP);

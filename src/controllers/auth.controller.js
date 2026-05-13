@@ -17,6 +17,73 @@ const PROFESSIONAL_ROLES = ['landlord', 'agent', 'movers'];
 
 // ==================== PHONE NUMBER AUTHENTICATION ====================
 
+// Check phone number role (NO OTP sent - just check if phone exists and get role)
+const checkPhoneNumber = async (req, res) => {
+  try {
+    const { phone_number } = req.body;
+    
+    if (!phone_number) {
+      return res.status(400).json({ error: "Phone number is required" });
+    }
+    
+    // Clean phone number (remove spaces, dashes)
+    const cleanedPhone = phone_number.replace(/[\s\-\(\)]/g, '');
+    
+    // Check if user exists
+    const existingUser = await userService.getUserByPhoneNumber(cleanedPhone);
+    
+    if (!existingUser) {
+      // New user - no role conflict
+      return res.json({
+        success: true,
+        exists: false,
+        message: "New user. Proceed with OTP.",
+        phone_number: cleanedPhone
+      });
+    }
+    
+    // User exists - return their role
+    let roleDisplay = existingUser.role;
+    let roleMessage = "";
+    
+    switch (existingUser.role) {
+      case 'home_finder':
+        roleDisplay = 'Home Finder';
+        roleMessage = 'You are registered as a Home Finder. You can browse properties and contact landlords.';
+        break;
+      case 'landlord':
+        roleDisplay = 'Landlord';
+        roleMessage = 'You are registered as a Landlord. You can list and manage your properties.';
+        break;
+      case 'agent':
+        roleDisplay = 'Agent';
+        roleMessage = 'You are registered as an Agent. You can list properties on behalf of landlords.';
+        break;
+      case 'movers':
+        roleDisplay = 'Movers';
+        roleMessage = 'You are registered as a Movers service provider. You can offer moving services.';
+        break;
+      default:
+        roleDisplay = existingUser.role;
+        roleMessage = `You are registered as a ${existingUser.role}.`;
+    }
+    
+    return res.json({
+      success: true,
+      exists: true,
+      role: existingUser.role,
+      role_display: roleDisplay,
+      role_message: roleMessage,
+      message: `Phone number is registered as a ${roleDisplay}.`,
+      phone_number: cleanedPhone
+    });
+    
+  } catch (error) {
+    console.error("Check phone number error:", error.message);
+    res.status(500).json({ error: error.message || "Failed to check phone number" });
+  }
+};
+
 // Step 1: Send OTP to phone number
 const sendOTP = async (req, res) => {
   try {
@@ -136,10 +203,26 @@ const verifyOTPAndLogin = async (req, res) => {
       else if (PROFESSIONAL_ROLES.includes(requestedRole)) {
         // Check if the user has the correct role for this section
         if (existingRole !== requestedRole) {
+          let roleDisplay = existingRole;
+          switch (existingRole) {
+            case 'home_finder': roleDisplay = 'Home Finder'; break;
+            case 'landlord': roleDisplay = 'Landlord'; break;
+            case 'agent': roleDisplay = 'Agent'; break;
+            case 'movers': roleDisplay = 'Movers'; break;
+          }
+          
+          let requestedDisplay = requestedRole;
+          switch (requestedRole) {
+            case 'home_finder': requestedDisplay = 'Home Finder'; break;
+            case 'landlord': requestedDisplay = 'Landlord'; break;
+            case 'agent': requestedDisplay = 'Agent'; break;
+            case 'movers': requestedDisplay = 'Movers'; break;
+          }
+          
           return res.status(403).json({
             success: false,
             error: "Access Denied",
-            message: `You are registered as a ${existingRole}. Please use the ${existingRole} section to login. To become a ${requestedRole}, please create a separate account with a different phone number.`,
+            message: `⚠️ Account Mismatch\n\nThis phone number is registered as a ${roleDisplay}.\n\nTo access the ${requestedDisplay} section, you need to create a separate account with a different phone number.\n\nYou can still access the Home Finder section with this account.`,
             current_role: existingRole,
             requested_role: requestedRole,
             requires_separate_account: true,
@@ -833,6 +916,7 @@ const deactivateUser = async (req, res) => {
 module.exports = {
   // Phone OTP auth methods
   sendOTP,
+  checkPhoneNumber,
   verifyOTPAndLogin,
   resendOTP,
   logout,
