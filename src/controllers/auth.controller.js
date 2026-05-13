@@ -12,6 +12,9 @@ const generateUserId = () => {
 // Valid roles
 const VALID_ROLES = ['home_finder', 'landlord', 'agent', 'movers'];
 
+// Professional roles that require dedicated accounts
+const PROFESSIONAL_ROLES = ['landlord', 'agent', 'movers'];
+
 // ==================== PHONE NUMBER AUTHENTICATION ====================
 
 // Step 1: Send OTP to phone number
@@ -120,12 +123,40 @@ const verifyOTPAndLogin = async (req, res) => {
       
       console.log(`✅ New user created: ${user.full_name} (${user.role}) - ${user.phone_number}`);
     } else {
-      // Existing user - update last login and ensure phone is verified
+      // EXISTING USER - Check role access
+      const existingRole = user.role;
+      const requestedRole = role;
+      
+      // HomeFinder is accessible to ALL users (no role restriction)
+      if (requestedRole === 'home_finder') {
+        // Allow any user to access HomeFinder section
+        console.log(`✅ HomeFinder access granted to: ${user.full_name} (registered as: ${existingRole})`);
+      } 
+      // Professional roles (Landlord, Agent, Movers) require matching role
+      else if (PROFESSIONAL_ROLES.includes(requestedRole)) {
+        // Check if the user has the correct role for this section
+        if (existingRole !== requestedRole) {
+          return res.status(403).json({
+            success: false,
+            error: "Access Denied",
+            message: `You are registered as a ${existingRole}. Please use the ${existingRole} section to login. To become a ${requestedRole}, please create a separate account with a different phone number.`,
+            current_role: existingRole,
+            requested_role: requestedRole,
+            requires_separate_account: true,
+            code: "ROLE_MISMATCH"
+          });
+        }
+      }
+      
+      // Update last login
       await userService.updateLastLogin(user.user_id);
+      
+      // Ensure phone is verified
       if (!user.phone_verified) {
         await userService.verifyPhoneNumber(cleanedPhone);
         user = await userService.getUserByPhoneNumber(cleanedPhone);
       }
+      
       console.log(`✅ Existing user logged in: ${user.full_name} (${user.role}) - ${user.phone_number}`);
     }
     
@@ -236,7 +267,6 @@ const getPublicUserProfile = async (req, res) => {
   }
 };
 
-// Update user profile
 // Update user profile (handles both JSON and file upload)
 const updateUserProfile = async (req, res) => {
   try {
@@ -255,7 +285,6 @@ const updateUserProfile = async (req, res) => {
     }
     
     // Handle text fields (works for both JSON and form-data)
-    // Check if body exists and extract values
     if (req.body) {
       if (req.body.full_name !== undefined && req.body.full_name !== null && req.body.full_name !== '') {
         updates.full_name = req.body.full_name;
