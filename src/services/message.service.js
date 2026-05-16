@@ -1,24 +1,21 @@
 const pool = require("../config/db");
+const userService = require("./user.service");
 
 class MessageService {
   
   async getOrCreateConversation(userId1, userId2) {
-    const [smallerId, largerId] = [userId1, userId2].sort();
+    // Sort IDs to ensure consistent ordering
+    const [participant1, participant2] = [userId1, userId2].sort();
     
-    let result = await pool.query(
-      `SELECT * FROM conversations 
-       WHERE participant1_id = $1 AND participant2_id = $2`,
-      [smallerId, largerId]
+    // Use INSERT ... ON CONFLICT to handle race conditions
+    const result = await pool.query(
+      `INSERT INTO conversations (participant1_id, participant2_id)
+       VALUES ($1, $2)
+       ON CONFLICT (participant1_id, participant2_id) 
+       DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [participant1, participant2]
     );
-    
-    if (result.rows.length === 0) {
-      result = await pool.query(
-        `INSERT INTO conversations (participant1_id, participant2_id)
-         VALUES ($1, $2)
-         RETURNING *`,
-        [smallerId, largerId]
-      );
-    }
     
     return result.rows[0];
   }
@@ -130,6 +127,7 @@ class MessageService {
       throw new Error("Conversation not found");
     }
     
+    // Order by ASC for consistent pagination (no reverse needed)
     const result = await pool.query(
       `SELECT 
         id,
@@ -138,18 +136,31 @@ class MessageService {
         message_text as text,
         is_read,
         read_at,
-        created_at as timestamp
+        created_at as timestamp,
+        conversation_id
       FROM messages
       WHERE conversation_id = $1
-      ORDER BY created_at DESC
+      ORDER BY created_at ASC
       LIMIT $2 OFFSET $3`,
       [conversationId, limit, offset]
     );
     
-    return result.rows.reverse();
+    return result.rows;
   }
   
   async sendMessage(senderId, receiverId, messageText) {
+    // Validate receiver exists
+    const receiverExists = await userService.getUserByUserId(receiverId);
+    if (!receiverExists) {
+      throw new Error("Receiver not found");
+    }
+    
+    // Validate sender exists
+    const senderExists = await userService.getUserByUserId(senderId);
+    if (!senderExists) {
+      throw new Error("Sender not found");
+    }
+    
     const conversation = await this.getOrCreateConversation(senderId, receiverId);
     
     const result = await pool.query(
@@ -161,14 +172,12 @@ class MessageService {
         receiver_id,
         message_text as text,
         is_read,
-        created_at as timestamp`,
+        created_at as timestamp,
+        conversation_id`,
       [conversation.id, senderId, receiverId, messageText]
     );
     
-    return {
-      ...result.rows[0],
-      conversation_id: conversation.id
-    };
+    return result.rows[0];
   }
   
   async markMessagesAsRead(conversationId, userId) {
@@ -223,6 +232,16 @@ class MessageService {
     }
     
     return result.rows[0];
+  }
+
+  // New method: Get all conversation IDs for a user (for WebSocket auto-join)
+  async getUserConversationIds(userId) {
+    const result = await pool.query(
+      `SELECT id FROM conversations 
+       WHERE participant1_id = $1 OR participant2_id = $1`,
+      [userId]
+    );
+    return result.rows.map(row => row.id);
   }
 }
 

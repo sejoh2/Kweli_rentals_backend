@@ -16,11 +16,22 @@ const initializeWebSocket = (server) => {
   
   io.use(wsAuth);
   
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     console.log(`✅ User connected: ${socket.userId} (${socket.user.full_name})`);
     
     // Join user's personal room
     socket.join(`user:${socket.userId}`);
+    
+    // AUTO-JOIN: User to all their conversation rooms
+    try {
+      const conversationIds = await messageService.getUserConversationIds(socket.userId);
+      conversationIds.forEach(convId => {
+        socket.join(`conversation:${convId}`);
+      });
+      console.log(`📱 User ${socket.userId} auto-joined ${conversationIds.length} conversation rooms`);
+    } catch (err) {
+      console.error(`Failed to auto-join rooms for ${socket.userId}:`, err.message);
+    }
     
     // Update user status to online
     messageService.updateUserStatus(socket.userId, true).then(() => {
@@ -30,10 +41,10 @@ const initializeWebSocket = (server) => {
       });
     });
     
-    // Handle joining conversation room
+    // Handle manually joining conversation room (for new conversations)
     socket.on("join_conversation", (conversationId) => {
       socket.join(`conversation:${conversationId}`);
-      console.log(`📱 User ${socket.userId} joined conversation ${conversationId}`);
+      console.log(`📱 User ${socket.userId} manually joined conversation ${conversationId}`);
     });
     
     // Handle leaving conversation room
@@ -61,11 +72,14 @@ const initializeWebSocket = (server) => {
           message.trim()
         );
         
-        io.to(`conversation:${conversationId}`).emit("new_message", newMessage);
+        io.to(`conversation:${newMessage.conversation_id}`).emit("new_message", newMessage);
         io.to(`user:${receiverId}`).emit("message_received", {
-          conversationId: conversationId,
+          conversationId: newMessage.conversation_id,
           message: newMessage
         });
+        
+        // Also ensure the sender is in the conversation room
+        socket.join(`conversation:${newMessage.conversation_id}`);
         
         socket.emit("message_sent", {
           success: true,

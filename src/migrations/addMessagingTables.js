@@ -22,7 +22,7 @@ async function addMessagingTables() {
         last_message_sender_id VARCHAR(128),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(participant1_id, participant2_id),
+        CONSTRAINT unique_conversation UNIQUE(participant1_id, participant2_id),
         CHECK (participant1_id != participant2_id)
       );
     `);
@@ -62,6 +62,7 @@ async function addMessagingTables() {
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_receiver_unread ON messages(receiver_id, is_read) WHERE is_read = false;
       CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON messages(sender_id, receiver_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation_read ON messages(conversation_id, is_read) WHERE is_read = false;
     `);
     console.log(`${colors.green}✅ Messaging indexes created${colors.reset}`);
 

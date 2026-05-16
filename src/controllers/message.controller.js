@@ -106,6 +106,13 @@ const sendMessage = async (req, res) => {
     });
   } catch (error) {
     console.error("Error sending message:", error);
+    // Handle specific errors
+    if (error.message === "Receiver not found") {
+      return res.status(404).json({ error: "Receiver not found" });
+    }
+    if (error.message === "Sender not found") {
+      return res.status(404).json({ error: "Sender not found" });
+    }
     res.status(500).json({ error: error.message });
   }
 };
