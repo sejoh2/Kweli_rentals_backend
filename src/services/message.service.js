@@ -128,22 +128,27 @@ class MessageService {
     }
     
     // Order by ASC for consistent pagination (no reverse needed)
-    const result = await pool.query(
-      `SELECT 
-        id,
-        sender_id,
-        receiver_id,
-        message_text as text,
-        is_read,
-        read_at,
-        created_at as timestamp,
-        conversation_id
-      FROM messages
-      WHERE conversation_id = $1
-      ORDER BY created_at ASC
-      LIMIT $2 OFFSET $3`,
-      [conversationId, limit, offset]
-    );
+    // Fetch latest messages, then return them oldest-to-newest for the Flutter UI.
+const result = await pool.query(
+  `SELECT *
+   FROM (
+     SELECT 
+       id,
+       sender_id,
+       receiver_id,
+       message_text as text,
+       is_read,
+       read_at,
+       created_at as timestamp,
+       conversation_id
+     FROM messages
+     WHERE conversation_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3
+   ) latest_messages
+   ORDER BY timestamp ASC`,
+  [conversationId, limit, offset]
+);
     
     return result.rows;
   }
