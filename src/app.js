@@ -4,6 +4,7 @@ const cors = require("cors");
 const propertyRoutes = require("./routes/property.routes");
 const authRoutes = require("./routes/auth.routes");
 const messageRoutes = require("./routes/message.routes");
+const moverRoutes = require("./routes/mover.routes");
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/property", propertyRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/movers", moverRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
