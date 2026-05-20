@@ -4,45 +4,35 @@ const app = require("./src/app");
 const initTables = require("./src/migrations/initTables");
 const addMessagingTables = require("./src/migrations/addMessagingTables");
 const addMoverTables = require("./src/migrations/addMoverTables");
+const addMoverBookingTables = require("./src/migrations/addMoverBookingTables");
 const { initializeWebSocket } = require("./src/services/websocket.service");
 
 const PORT = process.env.PORT || 3000;
 
-const colors = {
-  reset: "\x1b[0m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m"
-};
-
 async function start() {
-  console.log(`${colors.cyan}🚀 Starting Kweli Rentals Backend...${colors.reset}`);
-  console.log(`${colors.yellow}⏳ Connecting to database...${colors.reset}`);
+  console.log("Starting Kweli Rentals Backend...");
+  console.log("Connecting to database...");
 
   try {
     await initTables();
     await addMessagingTables();
     await addMoverTables();
+    await addMoverBookingTables();
 
     const server = app.listen(PORT, () => {
-      console.log(`${colors.green}✅ Server is running!${colors.reset}`);
-      console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-      console.log(`${colors.blue}🌐 Server URL:${colors.reset} http://localhost:${PORT}`);
-      console.log(`${colors.blue}🔐 Auth API:${colors.reset} http://localhost:${PORT}/api/auth`);
-      console.log(`${colors.blue}🏠 Properties API:${colors.reset} http://localhost:${PORT}/api/property`);
-      console.log(`${colors.blue}💬 Messages API:${colors.reset} http://localhost:${PORT}/api/messages`);
-      console.log(`${colors.blue}🚚 Movers API:${colors.reset} http://localhost:${PORT}/api/movers`);
-      console.log(`${colors.blue}🔌 WebSocket:${colors.reset} ws://localhost:${PORT}`);
-      console.log(`${colors.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-      console.log(`${colors.yellow}⚡ Server ready to accept requests${colors.reset}`);
+      console.log("Server is running!");
+      console.log(`Server URL: http://localhost:${PORT}`);
+      console.log(`Auth API: http://localhost:${PORT}/api/auth`);
+      console.log(`Properties API: http://localhost:${PORT}/api/property`);
+      console.log(`Messages API: http://localhost:${PORT}/api/messages`);
+      console.log(`Movers API: http://localhost:${PORT}/api/movers`);
+      console.log(`Homefinder Movers API: http://localhost:${PORT}/api/homefinder/movers`);
+      console.log(`WebSocket: ws://localhost:${PORT}`);
     });
 
     initializeWebSocket(server);
   } catch (error) {
-    console.log(`${colors.red}❌ Failed to start server:${colors.reset}`, error.message);
-    console.log(`${colors.red}❌ Server startup aborted due to database initialization failure${colors.reset}`);
+    console.log("Failed to start server:", error.message);
     process.exit(1);
   }
 }

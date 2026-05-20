@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const moverController = require("../controllers/mover.controller");
+const moverBookingController = require("../controllers/moverBooking.controller");
 const { authenticate, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
@@ -18,12 +19,53 @@ const moverUploadFields = upload.fields([
   { name: "owner_id_document", maxCount: 1 }
 ]);
 
-// Mover routes
 router.get(
   "/me",
   authenticate,
   requireRole("movers"),
   moverController.getMyMoverProfile
+);
+
+router.get(
+  "/dashboard",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.getMoverDashboard
+);
+
+router.get(
+  "/bookings",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.getMoverBookings
+);
+
+router.patch(
+  "/bookings/:bookingId/accept",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.acceptBooking
+);
+
+router.patch(
+  "/bookings/:bookingId/decline",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.declineBooking
+);
+
+router.patch(
+  "/bookings/:bookingId/start",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.startBooking
+);
+
+router.patch(
+  "/bookings/:bookingId/complete",
+  authenticate,
+  requireRole("movers"),
+  moverBookingController.completeBooking
 );
 
 router.post(
@@ -70,7 +112,6 @@ router.post(
   moverController.uploadDocuments
 );
 
-// Admin routes
 router.get(
   "/admin/pending",
   authenticate,
