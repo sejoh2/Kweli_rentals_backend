@@ -6,34 +6,40 @@ const trendingService = require("../services/trending.service");
 
 exports.uploadMiddleware = upload.array("media", 10);
 
+const emitPropertyEvent = (eventName, payload) => {
+  try {
+    const { getIO } = require("../services/websocket.service");
+    getIO().emit(eventName, payload);
+  } catch (socketError) {
+    console.error(`Failed to emit ${eventName}:`, socketError.message);
+  }
+};
+
 // Create a new property (authenticated)
 exports.createProperty = async (req, res) => {
   try {
     console.log("Starting property creation...");
     console.log("Headers:", req.headers);
     console.log("User:", req.user);
-    
-    // Check authentication
+
     if (!req.user) {
       console.error("No user found in request");
       return res.status(401).json({ error: "User not authenticated" });
     }
-    
-    // Get owner_id from authenticated user
+
     const owner_id = req.user.user_id;
     if (!owner_id) {
       console.error("No user_id found in user");
       return res.status(401).json({ error: "User ID not found" });
     }
-    
+
     console.log("Owner ID:", owner_id);
-    
+
     const files = req.files || [];
-    let mediaUrls = [];
+    const mediaUrls = [];
 
     console.log("Number of files:", files.length);
 
-    // Upload media files if provided
     if (files && files.length > 0) {
       for (const file of files) {
         try {
@@ -42,37 +48,35 @@ exports.createProperty = async (req, res) => {
           mediaUrls.push(url);
         } catch (uploadError) {
           console.error("Error uploading file:", uploadError.message);
-          // Continue with other files, don't fail the whole request
         }
       }
     }
 
-    // Parse amenities
     let amenities = [];
     if (req.body.amenities) {
       try {
-        amenities = typeof req.body.amenities === 'string' 
-          ? JSON.parse(req.body.amenities) 
-          : req.body.amenities;
+        amenities =
+          typeof req.body.amenities === "string"
+            ? JSON.parse(req.body.amenities)
+            : req.body.amenities;
       } catch (e) {
-        amenities = req.body.amenities.split(',').map(a => a.trim());
+        amenities = req.body.amenities.split(",").map((a) => a.trim());
       }
     }
 
-    // Parse furnished
     let furnished = false;
     if (req.body.furnished) {
-      furnished = req.body.furnished === 'true' || req.body.furnished === true;
+      furnished = req.body.furnished === "true" || req.body.furnished === true;
     }
 
-    // Parse numeric fields
     const monthly_rent = parseFloat(req.body.monthly_rent);
-    const security_deposit = req.body.security_deposit ? parseFloat(req.body.security_deposit) : null;
+    const security_deposit = req.body.security_deposit
+      ? parseFloat(req.body.security_deposit)
+      : null;
     const bedrooms = req.body.bedrooms ? parseInt(req.body.bedrooms) : null;
     const bathrooms = req.body.bathrooms ? parseFloat(req.body.bathrooms) : null;
     const size_sqm = req.body.size_sqm ? parseFloat(req.body.size_sqm) : null;
 
-    // Validate required fields
     if (!req.body.title) {
       return res.status(400).json({ error: "Title is required" });
     }
@@ -87,22 +91,31 @@ exports.createProperty = async (req, res) => {
     }
 
     const property = {
-      owner_id: owner_id,
+      owner_id,
       title: req.body.title.trim(),
       description: req.body.description || null,
       property_type: req.body.property_type,
       location_text: req.body.location_text,
-      monthly_rent: monthly_rent,
-      security_deposit: security_deposit,
-      bedrooms: bedrooms,
-      bathrooms: bathrooms,
-      size_sqm: size_sqm,
-      furnished: furnished,
+      monthly_rent,
+      security_deposit,
+      bedrooms,
+      bathrooms,
+      size_sqm,
+      furnished,
     };
 
     console.log("Creating property with data:", property);
 
-    const id = await propertyService.createProperty(property, mediaUrls, amenities);
+    const id = await propertyService.createProperty(
+      property,
+      mediaUrls,
+      amenities
+    );
+
+    emitPropertyEvent("property_created", {
+      propertyId: id,
+      ownerId: owner_id,
+    });
 
     res.status(201).json({
       success: true,
@@ -121,7 +134,7 @@ exports.createProperty = async (req, res) => {
 exports.getAllProperties = async (req, res) => {
   try {
     const pool = require("../config/db");
-    
+
     const result = await pool.query(`
       SELECT 
         p.*,
@@ -154,7 +167,7 @@ exports.getAllProperties = async (req, res) => {
       GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
     `);
-    
+
     res.json(result.rows);
   } catch (err) {
     console.error("Error fetching properties:", err);
@@ -162,17 +175,15 @@ exports.getAllProperties = async (req, res) => {
   }
 };
 
-// Get trending properties (based on trending_score)
 exports.getTrendingProperties = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-    
     const trending = await trendingService.getTrendingProperties(limit);
-    
+
     res.json({
       success: true,
       count: trending.length,
-      properties: trending
+      properties: trending,
     });
   } catch (err) {
     console.error("Error fetching trending properties:", err);
@@ -180,13 +191,10 @@ exports.getTrendingProperties = async (req, res) => {
   }
 };
 
-// Increment view count (track property views)
 exports.incrementView = async (req, res) => {
   try {
     const { id } = req.params;
-    
     await trendingService.incrementViewCount(id);
-    
     res.json({ success: true });
   } catch (err) {
     console.error("Error incrementing view count:", err);
@@ -194,13 +202,10 @@ exports.incrementView = async (req, res) => {
   }
 };
 
-// Increment inquiry count (when someone inquires about property)
 exports.incrementInquiry = async (req, res) => {
   try {
     const { id } = req.params;
-    
     await trendingService.incrementInquiryCount(id);
-    
     res.json({ success: true });
   } catch (err) {
     console.error("Error incrementing inquiry count:", err);
@@ -212,8 +217,9 @@ exports.getPropertiesByOwnerId = async (req, res) => {
   try {
     const { ownerId } = req.params;
     const pool = require("../config/db");
-    
-    const result = await pool.query(`
+
+    const result = await pool.query(
+      `
       SELECT 
         p.*,
         jsonb_build_object(
@@ -244,8 +250,10 @@ exports.getPropertiesByOwnerId = async (req, res) => {
       WHERE p.owner_id = $1
       GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
-    `, [ownerId]);
-    
+    `,
+      [ownerId]
+    );
+
     res.json(result.rows);
   } catch (err) {
     console.error("Error fetching properties by owner:", err);
@@ -258,11 +266,12 @@ exports.getMyProperties = async (req, res) => {
     if (!req.user || !req.user.user_id) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-    
+
     const owner_id = req.user.user_id;
     const pool = require("../config/db");
-    
-    const result = await pool.query(`
+
+    const result = await pool.query(
+      `
       SELECT 
         p.*,
         COALESCE(
@@ -283,11 +292,13 @@ exports.getMyProperties = async (req, res) => {
       WHERE p.owner_id = $1
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `, [owner_id]);
-    
+    `,
+      [owner_id]
+    );
+
     res.json({
       success: true,
-      properties: result.rows
+      properties: result.rows,
     });
   } catch (err) {
     console.error("Error fetching my properties:", err);
@@ -298,13 +309,12 @@ exports.getMyProperties = async (req, res) => {
 exports.getPropertyById = async (req, res) => {
   try {
     const { id } = req.params;
-    
     const property = await trendingService.getPropertyWithTrendingScore(id);
-    
+
     if (!property) {
       return res.status(404).json({ error: "Property not found" });
     }
-    
+
     res.json(property);
   } catch (err) {
     console.error("Error fetching property:", err);
@@ -318,49 +328,66 @@ exports.updateProperty = async (req, res) => {
     const owner_id = req.user.user_id;
     const updates = req.body;
     const pool = require("../config/db");
-    
+
     const checkResult = await pool.query(
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
     );
-    
+
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: "Property not found or you don't have permission" });
+      return res
+        .status(404)
+        .json({ error: "Property not found or you don't have permission" });
     }
-    
-    const allowedUpdates = ['title', 'description', 'property_type', 'location_text', 
-                           'monthly_rent', 'security_deposit', 'bedrooms', 'bathrooms', 
-                           'size_sqm', 'furnished'];
-    
+
+    const allowedUpdates = [
+      "title",
+      "description",
+      "property_type",
+      "location_text",
+      "monthly_rent",
+      "security_deposit",
+      "bedrooms",
+      "bathrooms",
+      "size_sqm",
+      "furnished",
+    ];
+
     const updateFields = [];
     const values = [id];
     let paramIndex = 2;
-    
-    Object.keys(updates).forEach(key => {
+
+    Object.keys(updates).forEach((key) => {
       if (allowedUpdates.includes(key) && updates[key] !== undefined) {
         updateFields.push(`${key} = $${paramIndex}`);
         values.push(updates[key]);
         paramIndex++;
       }
     });
-    
+
     if (updateFields.length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
     }
-    
+
     const query = `
       UPDATE properties 
-      SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP
+      SET ${updateFields.join(", ")}, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, values);
-    
+
+    emitPropertyEvent("property_updated", {
+      propertyId: id,
+      ownerId: owner_id,
+      property: result.rows[0],
+    });
+
     res.json({
       success: true,
       message: "Property updated successfully",
-      property: result.rows[0]
+      property: result.rows[0],
     });
   } catch (err) {
     console.error("Error updating property:", err);
@@ -375,10 +402,10 @@ exports.updatePropertyStatus = async (req, res) => {
     const owner_id = req.user.user_id;
     const pool = require("../config/db");
 
-    const validStatuses = ['active', 'pending', 'occupied'];
+    const validStatuses = ["active", "pending", "occupied"];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ 
-        error: "Invalid status. Must be one of: active, pending, occupied" 
+      return res.status(400).json({
+        error: "Invalid status. Must be one of: active, pending, occupied",
       });
     }
 
@@ -386,9 +413,11 @@ exports.updatePropertyStatus = async (req, res) => {
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
     );
-    
+
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: "Property not found or you don't have permission" });
+      return res
+        .status(404)
+        .json({ error: "Property not found or you don't have permission" });
     }
 
     const result = await pool.query(
@@ -399,10 +428,17 @@ exports.updatePropertyStatus = async (req, res) => {
       [status, id]
     );
 
+    emitPropertyEvent("property_updated", {
+      propertyId: id,
+      ownerId: owner_id,
+      status,
+      property: result.rows[0],
+    });
+
     res.json({
       success: true,
       message: `Property status updated to ${status}`,
-      property: result.rows[0]
+      property: result.rows[0],
     });
   } catch (err) {
     console.error("Error updating property status:", err);
@@ -415,24 +451,31 @@ exports.deleteProperty = async (req, res) => {
     const { id } = req.params;
     const owner_id = req.user.user_id;
     const pool = require("../config/db");
-    
+
     const checkResult = await pool.query(
       `SELECT id FROM properties WHERE id = $1 AND owner_id = $2`,
       [id, owner_id]
     );
-    
+
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: "Property not found or you don't have permission" });
+      return res
+        .status(404)
+        .json({ error: "Property not found or you don't have permission" });
     }
-    
+
     await pool.query(`DELETE FROM properties WHERE id = $1`, [id]);
-    
+
     const userService = require("../services/user.service");
     await userService.updateLandlordListingsCount(owner_id);
-    
+
+    emitPropertyEvent("property_deleted", {
+      propertyId: id,
+      ownerId: owner_id,
+    });
+
     res.json({
       success: true,
-      message: "Property deleted successfully"
+      message: "Property deleted successfully",
     });
   } catch (err) {
     console.error("Error deleting property:", err);
@@ -444,7 +487,7 @@ exports.toggleLike = async (req, res) => {
   try {
     const { id } = req.params;
     const pool = require("../config/db");
-    
+
     const result = await pool.query(
       `UPDATE properties 
        SET likes = likes + 1,
@@ -454,18 +497,17 @@ exports.toggleLike = async (req, res) => {
        RETURNING likes, recent_likes`,
       [id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Property not found" });
     }
-    
-    // Update trending score after like
+
     await trendingService.updatePropertyTrendingScore(id);
-    
+
     res.json({
       success: true,
       likes: result.rows[0].likes,
-      recent_likes: result.rows[0].recent_likes
+      recent_likes: result.rows[0].recent_likes,
     });
   } catch (err) {
     console.error("Error toggling like:", err);
@@ -475,9 +517,10 @@ exports.toggleLike = async (req, res) => {
 
 exports.searchProperties = async (req, res) => {
   try {
-    const { query, minPrice, maxPrice, bedrooms, property_type, location } = req.query;
+    const { query, minPrice, maxPrice, bedrooms, property_type, location } =
+      req.query;
     const pool = require("../config/db");
-    
+
     let sqlQuery = `
       SELECT 
         p.*,
@@ -506,54 +549,54 @@ exports.searchProperties = async (req, res) => {
       LEFT JOIN property_amenities pa ON p.id = pa.property_id
       WHERE p.status != 'occupied'
     `;
-    
+
     const values = [];
     let paramIndex = 1;
-    
+
     if (query) {
       sqlQuery += ` AND (p.title ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
       values.push(`%${query}%`);
       paramIndex++;
     }
-    
+
     if (minPrice) {
       sqlQuery += ` AND p.monthly_rent >= $${paramIndex}`;
       values.push(parseFloat(minPrice));
       paramIndex++;
     }
-    
+
     if (maxPrice) {
       sqlQuery += ` AND p.monthly_rent <= $${paramIndex}`;
       values.push(parseFloat(maxPrice));
       paramIndex++;
     }
-    
+
     if (bedrooms) {
       sqlQuery += ` AND p.bedrooms = $${paramIndex}`;
       values.push(parseInt(bedrooms));
       paramIndex++;
     }
-    
+
     if (property_type) {
       sqlQuery += ` AND p.property_type = $${paramIndex}`;
       values.push(property_type);
       paramIndex++;
     }
-    
+
     if (location) {
       sqlQuery += ` AND p.location_text ILIKE $${paramIndex}`;
       values.push(`%${location}%`);
       paramIndex++;
     }
-    
+
     sqlQuery += ` GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
-    
+
     const result = await pool.query(sqlQuery, values);
-    
+
     res.json({
       success: true,
       count: result.rows.length,
-      properties: result.rows
+      properties: result.rows,
     });
   } catch (err) {
     console.error("Error searching properties:", err);
