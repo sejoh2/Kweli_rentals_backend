@@ -134,10 +134,18 @@ exports.createProperty = async (req, res) => {
 exports.getAllProperties = async (req, res) => {
   try {
     const pool = require("../config/db");
+    const viewerId = req.user?.user_id || null;
 
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT 
         p.*,
+        EXISTS (
+          SELECT 1
+          FROM property_likes pl
+          WHERE pl.property_id = p.id
+            AND pl.user_id = $1::varchar
+        ) AS is_liked,
         jsonb_build_object(
           'id', u.id,
           'user_id', u.user_id,
@@ -166,7 +174,9 @@ exports.getAllProperties = async (req, res) => {
       WHERE p.status != 'occupied'
       GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
-    `);
+    `,
+      [viewerId]
+    );
 
     res.json(result.rows);
   } catch (err) {
@@ -177,8 +187,13 @@ exports.getAllProperties = async (req, res) => {
 
 exports.getTrendingProperties = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 10;
-    const trending = await trendingService.getTrendingProperties(limit);
+    const limit = parseInt(req.query.limit) || 4;
+    const viewerId = req.user?.user_id || null;
+
+    const trending = await trendingService.getTrendingProperties(
+      limit,
+      viewerId
+    );
 
     res.json({
       success: true,
@@ -216,12 +231,19 @@ exports.incrementInquiry = async (req, res) => {
 exports.getPropertiesByOwnerId = async (req, res) => {
   try {
     const { ownerId } = req.params;
+    const viewerId = req.user?.user_id || null;
     const pool = require("../config/db");
 
     const result = await pool.query(
       `
       SELECT 
         p.*,
+        EXISTS (
+          SELECT 1
+          FROM property_likes pl
+          WHERE pl.property_id = p.id
+            AND pl.user_id = $2::varchar
+        ) AS is_liked,
         jsonb_build_object(
           'id', u.id,
           'user_id', u.user_id,
@@ -251,7 +273,7 @@ exports.getPropertiesByOwnerId = async (req, res) => {
       GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
       ORDER BY p.created_at DESC
     `,
-      [ownerId]
+      [ownerId, viewerId]
     );
 
     res.json(result.rows);
@@ -309,7 +331,12 @@ exports.getMyProperties = async (req, res) => {
 exports.getPropertyById = async (req, res) => {
   try {
     const { id } = req.params;
-    const property = await trendingService.getPropertyWithTrendingScore(id);
+    const viewerId = req.user?.user_id || null;
+
+    const property = await trendingService.getPropertyWithTrendingScore(
+      id,
+      viewerId
+    );
 
     if (!property) {
       return res.status(404).json({ error: "Property not found" });
@@ -321,7 +348,6 @@ exports.getPropertyById = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.updateProperty = async (req, res) => {
   try {
     const { id } = req.params;
@@ -484,34 +510,108 @@ exports.deleteProperty = async (req, res) => {
 };
 
 exports.toggleLike = async (req, res) => {
+  const pool = require("../config/db");
+  const client = await pool.connect();
+
   try {
     const { id } = req.params;
-    const pool = require("../config/db");
+    const userId = req.user?.user_id;
 
-    const result = await pool.query(
-      `UPDATE properties 
-       SET likes = likes + 1,
-           recent_likes = COALESCE(recent_likes, 0) + 1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1 
-       RETURNING likes, recent_likes`,
+    if (!userId) {
+      return res.status(401).json({ error: "Please log in to like properties" });
+    }
+
+    await client.query("BEGIN");
+
+    const propertyResult = await client.query(
+      `SELECT id FROM properties WHERE id = $1 AND status != 'occupied'`,
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (propertyResult.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ error: "Property not found" });
     }
 
-    await trendingService.updatePropertyTrendingScore(id);
+    const insertResult = await client.query(
+      `
+      INSERT INTO property_likes (property_id, user_id)
+      VALUES ($1, $2)
+      ON CONFLICT (property_id, user_id) DO NOTHING
+      RETURNING id
+    `,
+      [id, userId]
+    );
+
+    let liked = false;
+    let propertyStats;
+
+    if (insertResult.rows.length > 0) {
+      liked = true;
+
+      const updateResult = await client.query(
+        `
+        UPDATE properties
+        SET likes = COALESCE(likes, 0) + 1,
+            recent_likes = COALESCE(recent_likes, 0) + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING likes, recent_likes
+      `,
+        [id]
+      );
+
+      propertyStats = updateResult.rows[0];
+    } else {
+      liked = false;
+
+      await client.query(
+        `
+        DELETE FROM property_likes
+        WHERE property_id = $1 AND user_id = $2
+      `,
+        [id, userId]
+      );
+
+      const updateResult = await client.query(
+        `
+        UPDATE properties
+        SET likes = GREATEST(COALESCE(likes, 0) - 1, 0),
+            recent_likes = GREATEST(COALESCE(recent_likes, 0) - 1, 0),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING likes, recent_likes
+      `,
+        [id]
+      );
+
+      propertyStats = updateResult.rows[0];
+    }
+
+    await client.query("COMMIT");
+
+    const trendingScore = await trendingService.updatePropertyTrendingScore(id);
+
+    emitPropertyEvent("property_updated", {
+      propertyId: id,
+      likes: propertyStats.likes,
+      recentLikes: propertyStats.recent_likes,
+      trendingScore,
+    });
 
     res.json({
       success: true,
-      likes: result.rows[0].likes,
-      recent_likes: result.rows[0].recent_likes,
+      liked,
+      likes: propertyStats.likes,
+      recent_likes: propertyStats.recent_likes,
+      trending_score: trendingScore,
     });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error("Error toggling like:", err);
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 };
 
@@ -520,10 +620,17 @@ exports.searchProperties = async (req, res) => {
     const { query, minPrice, maxPrice, bedrooms, property_type, location } =
       req.query;
     const pool = require("../config/db");
+    const viewerId = req.user?.user_id || null;
 
     let sqlQuery = `
       SELECT 
         p.*,
+        EXISTS (
+          SELECT 1
+          FROM property_likes pl
+          WHERE pl.property_id = p.id
+            AND pl.user_id = $1::varchar
+        ) AS is_liked,
         jsonb_build_object(
           'id', u.id,
           'user_id', u.user_id,
@@ -550,8 +657,8 @@ exports.searchProperties = async (req, res) => {
       WHERE p.status != 'occupied'
     `;
 
-    const values = [];
-    let paramIndex = 1;
+    const values = [viewerId];
+    let paramIndex = 2;
 
     if (query) {
       sqlQuery += ` AND (p.title ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`;
@@ -589,7 +696,10 @@ exports.searchProperties = async (req, res) => {
       paramIndex++;
     }
 
-    sqlQuery += ` GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
+    sqlQuery += `
+      GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating
+      ORDER BY p.created_at DESC
+    `;
 
     const result = await pool.query(sqlQuery, values);
 

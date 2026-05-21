@@ -159,154 +159,166 @@ class TrendingService {
 
   // Get only the strongest properties as trending.
   // This keeps trending as a featured ranked slice, not a second "all properties" list.
-  async getTrendingProperties(limit = 4) {
-    const requestedLimit = parseInt(limit, 10) || 4;
-    const slotCount = await this._getTrendingSlotCount(requestedLimit);
+  async getTrendingProperties(limit = 4, viewerId = null) {
+  const requestedLimit = parseInt(limit, 10) || 4;
+  const slotCount = await this._getTrendingSlotCount(requestedLimit);
 
-    if (slotCount === 0) {
-      return [];
-    }
+  if (slotCount === 0) {
+    return [];
+  }
 
-    const result = await pool.query(
-      `
-      WITH ranked_properties AS (
-        SELECT
-          p.*,
-          (${this._scoreExpression()}) AS calculated_trending_score,
-          ROW_NUMBER() OVER (
-            ORDER BY
-              (${this._scoreExpression()}) DESC,
-              COALESCE(p.recent_inquiries, 0) DESC,
-              COALESCE(p.recent_likes, 0) DESC,
-              COALESCE(p.recent_views, 0) DESC,
-              p.updated_at DESC
-          ) AS trend_rank
-        FROM properties p
-        WHERE p.status = 'active'
-          AND (
-            COALESCE(p.recent_likes, 0) > 0
-            OR COALESCE(p.recent_views, 0) > 0
-            OR COALESCE(p.recent_inquiries, 0) > 0
-          )
-      )
+  const result = await pool.query(
+    `
+    WITH ranked_properties AS (
       SELECT
         p.*,
-        p.calculated_trending_score AS trending_score,
-        jsonb_build_object(
-          'id', u.id,
-          'user_id', u.user_id,
-          'full_name', u.full_name,
-          'email', u.email,
-          'phone_number', u.phone_number,
-          'profile_image_url', u.profile_image_url,
-          'rating', u.rating
-        ) as owner,
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object(
-            'id', pm.id,
-            'url', pm.url,
-            'type', pm.type
-          )) FILTER (WHERE pm.id IS NOT NULL),
-          '[]'
-        ) as media,
-        COALESCE(
-          json_agg(DISTINCT pa.name) FILTER (WHERE pa.name IS NOT NULL),
-          '[]'
-        ) as amenities
-      FROM ranked_properties p
-      LEFT JOIN users u ON p.owner_id = u.user_id
-      LEFT JOIN property_media pm ON p.id = pm.property_id
-      LEFT JOIN property_amenities pa ON p.id = pa.property_id
-      WHERE p.trend_rank <= $1
-      GROUP BY
-        p.id,
-        p.owner_id,
-        p.title,
-        p.description,
-        p.property_type,
-        p.location_text,
-        p.latitude,
-        p.longitude,
-        p.monthly_rent,
-        p.security_deposit,
-        p.bedrooms,
-        p.bathrooms,
-        p.size_sqm,
-        p.furnished,
-        p.status,
-        p.likes,
-        p.trending_score,
-        p.recent_likes,
-        p.recent_views,
-        p.recent_inquiries,
-        p.last_trending_update,
-        p.created_at,
-        p.updated_at,
-        p.calculated_trending_score,
-        p.trend_rank,
-        u.id,
-        u.user_id,
-        u.full_name,
-        u.email,
-        u.phone_number,
-        u.profile_image_url,
-        u.rating
-      ORDER BY
-        p.calculated_trending_score DESC,
-        COALESCE(p.recent_inquiries, 0) DESC,
-        COALESCE(p.recent_likes, 0) DESC,
-        COALESCE(p.recent_views, 0) DESC,
-        p.updated_at DESC
-    `,
-      [slotCount]
-    );
+        (${this._scoreExpression()}) AS calculated_trending_score,
+        ROW_NUMBER() OVER (
+          ORDER BY
+            (${this._scoreExpression()}) DESC,
+            COALESCE(p.recent_inquiries, 0) DESC,
+            COALESCE(p.recent_likes, 0) DESC,
+            COALESCE(p.recent_views, 0) DESC,
+            p.updated_at DESC
+        ) AS trend_rank
+      FROM properties p
+      WHERE p.status = 'active'
+        AND (
+          COALESCE(p.recent_likes, 0) > 0
+          OR COALESCE(p.recent_views, 0) > 0
+          OR COALESCE(p.recent_inquiries, 0) > 0
+        )
+    )
+    SELECT
+      p.*,
+      p.calculated_trending_score AS trending_score,
+      EXISTS (
+        SELECT 1
+        FROM property_likes pl
+        WHERE pl.property_id = p.id
+          AND pl.user_id = $2::varchar
+      ) AS is_liked,
+      jsonb_build_object(
+        'id', u.id,
+        'user_id', u.user_id,
+        'full_name', u.full_name,
+        'email', u.email,
+        'phone_number', u.phone_number,
+        'profile_image_url', u.profile_image_url,
+        'rating', u.rating
+      ) as owner,
+      COALESCE(
+        json_agg(DISTINCT jsonb_build_object(
+          'id', pm.id,
+          'url', pm.url,
+          'type', pm.type
+        )) FILTER (WHERE pm.id IS NOT NULL),
+        '[]'
+      ) as media,
+      COALESCE(
+        json_agg(DISTINCT pa.name) FILTER (WHERE pa.name IS NOT NULL),
+        '[]'
+      ) as amenities
+    FROM ranked_properties p
+    LEFT JOIN users u ON p.owner_id = u.user_id
+    LEFT JOIN property_media pm ON p.id = pm.property_id
+    LEFT JOIN property_amenities pa ON p.id = pa.property_id
+    WHERE p.trend_rank <= $1
+    GROUP BY
+      p.id,
+      p.owner_id,
+      p.title,
+      p.description,
+      p.property_type,
+      p.location_text,
+      p.latitude,
+      p.longitude,
+      p.monthly_rent,
+      p.security_deposit,
+      p.bedrooms,
+      p.bathrooms,
+      p.size_sqm,
+      p.furnished,
+      p.status,
+      p.likes,
+      p.trending_score,
+      p.recent_likes,
+      p.recent_views,
+      p.recent_inquiries,
+      p.last_trending_update,
+      p.created_at,
+      p.updated_at,
+      p.calculated_trending_score,
+      p.trend_rank,
+      u.id,
+      u.user_id,
+      u.full_name,
+      u.email,
+      u.phone_number,
+      u.profile_image_url,
+      u.rating
+    ORDER BY
+      p.calculated_trending_score DESC,
+      COALESCE(p.recent_inquiries, 0) DESC,
+      COALESCE(p.recent_likes, 0) DESC,
+      COALESCE(p.recent_views, 0) DESC,
+      p.updated_at DESC
+  `,
+    [slotCount, viewerId]
+  );
 
-    return result.rows;
-  }
+  return result.rows;
+}
 
   // Get property with its trending score
-  async getPropertyWithTrendingScore(propertyId) {
-    const result = await pool.query(
-      `
-      SELECT
-        p.*,
-        p.trending_score,
-        p.recent_likes,
-        p.recent_views,
-        p.recent_inquiries,
-        jsonb_build_object(
-          'id', u.id,
-          'user_id', u.user_id,
-          'full_name', u.full_name,
-          'email', u.email,
-          'phone_number', u.phone_number,
-          'profile_image_url', u.profile_image_url,
-          'rating', u.rating
-        ) as owner,
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object(
-            'id', pm.id,
-            'url', pm.url,
-            'type', pm.type
-          )) FILTER (WHERE pm.id IS NOT NULL),
-          '[]'
-        ) as media,
-        COALESCE(
-          json_agg(DISTINCT pa.name) FILTER (WHERE pa.name IS NOT NULL),
-          '[]'
-        ) as amenities
-      FROM properties p
-      LEFT JOIN users u ON p.owner_id = u.user_id
-      LEFT JOIN property_media pm ON p.id = pm.property_id
-      LEFT JOIN property_amenities pa ON p.id = pa.property_id
-      WHERE p.id = $1
-      GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
-    `,
-      [propertyId]
-    );
+  async getPropertyWithTrendingScore(propertyId, viewerId = null) {
+  const result = await pool.query(
+    `
+    SELECT
+      p.*,
+      p.trending_score,
+      p.recent_likes,
+      p.recent_views,
+      p.recent_inquiries,
+      EXISTS (
+        SELECT 1
+        FROM property_likes pl
+        WHERE pl.property_id = p.id
+          AND pl.user_id = $2::varchar
+      ) AS is_liked,
+      jsonb_build_object(
+        'id', u.id,
+        'user_id', u.user_id,
+        'full_name', u.full_name,
+        'email', u.email,
+        'phone_number', u.phone_number,
+        'profile_image_url', u.profile_image_url,
+        'rating', u.rating
+      ) as owner,
+      COALESCE(
+        json_agg(DISTINCT jsonb_build_object(
+          'id', pm.id,
+          'url', pm.url,
+          'type', pm.type
+        )) FILTER (WHERE pm.id IS NOT NULL),
+        '[]'
+      ) as media,
+      COALESCE(
+        json_agg(DISTINCT pa.name) FILTER (WHERE pa.name IS NOT NULL),
+        '[]'
+      ) as amenities
+    FROM properties p
+    LEFT JOIN users u ON p.owner_id = u.user_id
+    LEFT JOIN property_media pm ON p.id = pm.property_id
+    LEFT JOIN property_amenities pa ON p.id = pa.property_id
+    WHERE p.id = $1
+    GROUP BY p.id, u.id, u.user_id, u.full_name, u.email, u.phone_number, u.profile_image_url, u.rating
+  `,
+    [propertyId, viewerId]
+  );
 
-    return result.rows[0];
-  }
+  return result.rows[0];
+}
 }
 
 module.exports = new TrendingService();

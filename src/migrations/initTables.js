@@ -6,7 +6,7 @@ const colors = {
   green: "\x1b[32m",
   red: "\x1b[31m",
   yellow: "\x1b[33m",
-  blue: "\x1b[34m"
+  blue: "\x1b[34m",
 };
 
 async function initTables() {
@@ -121,6 +121,18 @@ async function initTables() {
     `);
     console.log(`${colors.green}✅ Property amenities table created${colors.reset}`);
 
+    // Create property_likes table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS property_likes (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        property_id UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+        user_id VARCHAR(128) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(property_id, user_id)
+      );
+    `);
+    console.log(`${colors.green}✅ Property likes table created${colors.reset}`);
+
     // Create indexes for better performance
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
@@ -136,6 +148,9 @@ async function initTables() {
       CREATE INDEX IF NOT EXISTS idx_properties_trending_score ON properties(trending_score DESC);
       CREATE INDEX IF NOT EXISTS idx_property_media_property_id ON property_media(property_id);
       CREATE INDEX IF NOT EXISTS idx_property_amenities_property_id ON property_amenities(property_id);
+      CREATE INDEX IF NOT EXISTS idx_property_likes_property_id ON property_likes(property_id);
+      CREATE INDEX IF NOT EXISTS idx_property_likes_user_id ON property_likes(user_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_property_likes_unique_property_user ON property_likes(property_id, user_id);
     `);
     console.log(`${colors.green}✅ Database indexes created${colors.reset}`);
 

@@ -1,26 +1,27 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/property.controller");
-const { authenticate, requireRole } = require("../middleware/auth");
+const { authenticate, requireRole, optionalAuth } = require("../middleware/auth");
 
-// Public routes (anyone can view)
-router.get("/all", controller.getAllProperties);
-router.get("/trending", controller.getTrendingProperties);
-router.get("/search", controller.searchProperties);
-router.get("/:id", controller.getPropertyById);
-router.get("/owner/:ownerId", controller.getPropertiesByOwnerId);
-router.post("/:id/like", controller.toggleLike);
+// Public routes with optional auth, so logged-in users can see is_liked
+router.get("/all", optionalAuth, controller.getAllProperties);
+router.get("/trending", optionalAuth, controller.getTrendingProperties);
+router.get("/search", optionalAuth, controller.searchProperties);
+router.get("/owner/:ownerId", optionalAuth, controller.getPropertiesByOwnerId);
+router.get("/:id", optionalAuth, controller.getPropertyById);
+
 router.post("/:id/view", controller.incrementView);
 
-// Protected routes (require authentication)
+// Protected routes
 router.get("/me/properties", authenticate, controller.getMyProperties);
+router.post("/:id/like", authenticate, controller.toggleLike);
 router.post("/:id/inquiry", authenticate, controller.incrementInquiry);
 
-// Protected routes (require landlord or agent role)
+// Protected routes for landlord/agent
 router.post(
   "/create",
   authenticate,
-  requireRole('landlord', 'agent'),
+  requireRole("landlord", "agent"),
   controller.uploadMiddleware,
   controller.createProperty
 );
@@ -28,21 +29,21 @@ router.post(
 router.put(
   "/:id",
   authenticate,
-  requireRole('landlord', 'agent'),
+  requireRole("landlord", "agent"),
   controller.updateProperty
 );
 
 router.patch(
   "/:id/status",
   authenticate,
-  requireRole('landlord', 'agent'),
+  requireRole("landlord", "agent"),
   controller.updatePropertyStatus
 );
 
 router.delete(
   "/:id",
   authenticate,
-  requireRole('landlord', 'agent'),
+  requireRole("landlord", "agent"),
   controller.deleteProperty
 );
 
