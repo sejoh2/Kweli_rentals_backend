@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { getIO } = require("./websocket.service");
+const notificationService = require("./notification.service");
 
 const PLATFORM_FEE_RATE = Number(process.env.MOVER_PLATFORM_FEE_RATE || 0.1);
 
@@ -302,6 +303,16 @@ async function createMoverBooking(homefinderUserId, data) {
   emitToUser(homefinderUserId, "mover_booking_created", { booking });
   await emitMoverDashboardUpdate(mover.owner_user_id);
 
+notificationService
+  .sendMoverBookingCreatedNotification(booking)
+  .catch((notificationError) => {
+    console.error(
+      "Mover booking request push notification error:",
+      notificationError.message
+    );
+  });
+  
+
   return booking;
 }
 
@@ -525,6 +536,15 @@ async function updateMoverBookingStatus({
   });
   await emitMoverDashboardUpdate(fullBooking.mover_user_id);
 
+  notificationService
+  .sendMoverBookingStatusNotification(fullBooking)
+  .catch((notificationError) => {
+    console.error(
+      "Mover booking status push notification error:",
+      notificationError.message
+    );
+  });
+
   return fullBooking;
 }
 
@@ -599,6 +619,15 @@ async function cancelHomefinderBooking(bookingId, homefinderUserId, reason = nul
     booking: updated
   });
   await emitMoverDashboardUpdate(updated.mover_user_id);
+
+  notificationService
+  .sendMoverBookingStatusNotification(updated)
+  .catch((notificationError) => {
+    console.error(
+      "Mover booking cancellation push notification error:",
+      notificationError.message
+    );
+  });
 
   return updated;
 }

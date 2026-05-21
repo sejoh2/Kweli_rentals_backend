@@ -1,6 +1,7 @@
 const { Server } = require("socket.io");
 const wsAuth = require("../middleware/wsAuth");
 const messageService = require("./message.service");
+const notificationService = require("./notification.service");
 
 let io;
 
@@ -161,6 +162,15 @@ const initializeWebSocket = (server) => {
         );
 
         emitMessageCreated(newMessage);
+
+        notificationService
+  .sendChatMessageNotification(newMessage)
+  .catch((notificationError) => {
+    console.error(
+      "WebSocket message push notification error:",
+      notificationError.message
+    );
+  });
 
         socket.emit("message_sent", {
           success: true,

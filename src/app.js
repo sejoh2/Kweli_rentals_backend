@@ -6,6 +6,7 @@ const authRoutes = require("./routes/auth.routes");
 const messageRoutes = require("./routes/message.routes");
 const moverRoutes = require("./routes/mover.routes");
 const homefinderMoverRoutes = require("./routes/homefinderMover.routes");
+const notificationRoutes = require("./routes/notification.routes");
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use("/api/property", propertyRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/movers", moverRoutes);
 app.use("/api/homefinder", homefinderMoverRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });

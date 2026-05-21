@@ -1,4 +1,5 @@
 const messageService = require("../services/message.service");
+const notificationService = require("../services/notification.service");
 const {
   emitMessageCreated,
   emitMessagesRead
@@ -109,6 +110,12 @@ const sendMessage = async (req, res) => {
     } catch (wsError) {
       console.error("WebSocket broadcast error:", wsError.message);
     }
+
+    notificationService
+      .sendChatMessageNotification(newMessage)
+      .catch((notificationError) => {
+        console.error("Message push notification error:", notificationError.message);
+      });
 
     res.status(201).json({
       success: true,
