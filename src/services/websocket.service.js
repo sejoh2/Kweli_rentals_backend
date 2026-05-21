@@ -12,6 +12,13 @@ const getIO = () => {
   return io;
 };
 
+const isUserOnline = (userId) => {
+  if (!io || !userId) return false;
+
+  const room = io.sockets.adapter.rooms.get(`user:${userId}`);
+  return !!room && room.size > 0;
+};
+
 const joinConversationRoomForUsers = (conversationId, userIds = []) => {
   if (!io || !conversationId) return;
 
@@ -47,6 +54,15 @@ const emitMessageCreated = (message) => {
     conversationId,
     message
   });
+
+  if (isUserOnline(receiverId)) {
+    io.to(`user:${senderId}`).emit("message_delivered", {
+      conversationId,
+      messageId: message.id,
+      deliveredTo: receiverId,
+      timestamp: new Date()
+    });
+  }
 
   emitConversationUpdated(conversationId, [senderId, receiverId], message);
 };
@@ -112,14 +128,10 @@ const initializeWebSocket = (server) => {
 
     socket.on("join_conversation", (conversationId) => {
       socket.join(`conversation:${conversationId}`);
-      console.log(
-        `User ${socket.userId} manually joined conversation ${conversationId}`
-      );
     });
 
     socket.on("leave_conversation", (conversationId) => {
       socket.leave(`conversation:${conversationId}`);
-      console.log(`User ${socket.userId} left conversation ${conversationId}`);
     });
 
     socket.on("send_message", async (data, callback) => {
