@@ -22,6 +22,31 @@ const parseWorkingHours = (body) => {
   };
 };
 
+const emitMoversChanged = (reason, profile = null) => {
+  try {
+    const { getIO } = require("../services/websocket.service");
+
+    getIO().emit("movers_changed", {
+      reason,
+      moverId: profile?.id || null,
+      ownerUserId: profile?.owner_user_id || null,
+      registrationStatus: profile?.registration_status || null,
+      companyName: profile?.company_name || null,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (socketError) {
+    console.error("Failed to emit movers_changed:", socketError.message);
+  }
+};
+
+const emitIfMoverIsVisibleToHomefinders = (reason, profile) => {
+  if (!profile) return;
+
+  if (profile.registration_status === "verified") {
+    emitMoversChanged(reason, profile);
+  }
+};
+
 const getMyMoverProfile = async (req, res) => {
   try {
     const profile = await moverService.getMoverProfileByUserId(req.user.user_id);
@@ -95,6 +120,8 @@ const registerMover = async (req, res) => {
 
     const profile = await moverService.registerMover(req.user.user_id, data, req.files);
 
+    emitMoversChanged("mover_registration_submitted", profile);
+
     res.status(201).json({
       success: true,
       message: "Mover registration submitted successfully. Awaiting admin verification.",
@@ -121,6 +148,8 @@ const updateCompanyDetails = async (req, res) => {
 
     const profile = await moverService.updateMoverProfile(req.user.user_id, updates);
 
+    emitIfMoverIsVisibleToHomefinders("mover_company_details_updated", profile);
+
     res.json({
       success: true,
       message: "Company details updated successfully",
@@ -138,6 +167,8 @@ const updateServiceAreas = async (req, res) => {
       base_location: req.body.base_location,
       service_areas: req.body.service_areas || []
     });
+
+    emitIfMoverIsVisibleToHomefinders("mover_service_areas_updated", profile);
 
     res.json({
       success: true,
@@ -161,6 +192,8 @@ const updateFleetPricing = async (req, res) => {
       notice_period_days: req.body.notice_period_days
     });
 
+    emitIfMoverIsVisibleToHomefinders("mover_fleet_pricing_updated", profile);
+
     res.json({
       success: true,
       message: "Fleet and pricing updated successfully",
@@ -177,6 +210,8 @@ const updateAvailability = async (req, res) => {
     const profile = await moverService.updateMoverProfile(req.user.user_id, {
       working_hours: req.body.working_hours || parseWorkingHours(req.body)
     });
+
+    emitIfMoverIsVisibleToHomefinders("mover_availability_updated", profile);
 
     res.json({
       success: true,
@@ -196,6 +231,8 @@ const uploadDocuments = async (req, res) => {
     }
 
     const profile = await moverService.uploadMoverDocuments(req.user.user_id, req.files);
+
+    emitIfMoverIsVisibleToHomefinders("mover_documents_updated", profile);
 
     res.json({
       success: true,
@@ -253,6 +290,8 @@ const approveMover = async (req, res) => {
       notes || null
     );
 
+    emitMoversChanged("mover_verified", profile);
+
     res.json({
       success: true,
       message: `${profile.company_name} has been verified successfully`,
@@ -274,6 +313,8 @@ const rejectMover = async (req, res) => {
       reason || "No reason provided",
       req.user.user_id
     );
+
+    emitMoversChanged("mover_rejected", profile);
 
     res.json({
       success: true,
