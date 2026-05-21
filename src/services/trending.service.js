@@ -128,27 +128,34 @@ class TrendingService {
   }
 
   async _getTrendingSlotCount(requestedLimit) {
-    const result = await pool.query(`
-      SELECT COUNT(*)::int AS active_count
-      FROM properties
-      WHERE status = 'active'
-    `);
+  const result = await pool.query(`
+    SELECT COUNT(*)::int AS active_count
+    FROM properties
+    WHERE status = 'active'
+  `);
 
-    const activeCount = result.rows[0]?.active_count || 0;
+  const activeCount = result.rows[0]?.active_count || 0;
 
-    if (activeCount < 4) {
-      return 0;
-    }
-
-    const requested = Number.isFinite(requestedLimit) && requestedLimit > 0
-      ? requestedLimit
-      : 4;
-
-    const percentageBasedSlots = Math.floor(activeCount * 0.25);
-    const slots = Math.min(requested, 4, percentageBasedSlots, activeCount - 1);
-
-    return Math.max(slots, 1);
+  if (activeCount === 0) {
+    return 0;
   }
+
+  const requested = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? requestedLimit
+    : 4;
+
+  let slotCount = 1;
+
+  if (activeCount >= 12) {
+    slotCount = 4;
+  } else if (activeCount >= 8) {
+    slotCount = 3;
+  } else if (activeCount >= 4) {
+    slotCount = 2;
+  }
+
+  return Math.min(slotCount, requested, 4, activeCount);
+}
 
   // Get only the strongest properties as trending.
   // This keeps trending as a featured ranked slice, not a second "all properties" list.
