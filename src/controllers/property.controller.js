@@ -3,6 +3,7 @@ const upload = multer({ dest: "uploads/" });
 const mediaService = require("../services/media.service");
 const propertyService = require("../services/property.service");
 const trendingService = require("../services/trending.service");
+const geocodingService = require("../services/geocoding.service");
 
 exports.uploadMiddleware = upload.array("media", 10);
 
@@ -38,8 +39,6 @@ exports.createProperty = async (req, res) => {
     const files = req.files || [];
     const mediaUrls = [];
 
-    console.log("Number of files:", files.length);
-
     if (files && files.length > 0) {
       for (const file of files) {
         try {
@@ -64,29 +63,48 @@ exports.createProperty = async (req, res) => {
       }
     }
 
-    let furnished = false;
-    if (req.body.furnished) {
-      furnished = req.body.furnished === "true" || req.body.furnished === true;
-    }
+    const furnished =
+      req.body.furnished === "true" || req.body.furnished === true;
+
+    const parseOptionalFloat = (value) => {
+      if (value === undefined || value === null || value === "") return null;
+      const parsed = parseFloat(value);
+      return Number.isNaN(parsed) ? null : parsed;
+    };
 
     const monthly_rent = parseFloat(req.body.monthly_rent);
-    const security_deposit = req.body.security_deposit
-      ? parseFloat(req.body.security_deposit)
-      : null;
+    const security_deposit = parseOptionalFloat(req.body.security_deposit);
     const bedrooms = req.body.bedrooms ? parseInt(req.body.bedrooms) : null;
-    const bathrooms = req.body.bathrooms ? parseFloat(req.body.bathrooms) : null;
-    const size_sqm = req.body.size_sqm ? parseFloat(req.body.size_sqm) : null;
+    const bathrooms = parseOptionalFloat(req.body.bathrooms);
+    const size_sqm = parseOptionalFloat(req.body.size_sqm);
+
+    let latitude = parseOptionalFloat(req.body.latitude);
+    let longitude = parseOptionalFloat(req.body.longitude);
+    let location_text = req.body.location_text?.toString().trim() || "";
+
+    const resolvedLocation = await geocodingService.resolvePropertyLocation({
+      locationText: location_text,
+      latitude,
+      longitude,
+    });
+
+    location_text = resolvedLocation.locationText;
+    latitude = resolvedLocation.latitude;
+    longitude = resolvedLocation.longitude;
 
     if (!req.body.title) {
       return res.status(400).json({ error: "Title is required" });
     }
+
     if (!req.body.property_type) {
       return res.status(400).json({ error: "Property type is required" });
     }
-    if (!req.body.location_text) {
+
+    if (!location_text) {
       return res.status(400).json({ error: "Location is required" });
     }
-    if (!monthly_rent || isNaN(monthly_rent)) {
+
+    if (!monthly_rent || Number.isNaN(monthly_rent)) {
       return res.status(400).json({ error: "Valid monthly rent is required" });
     }
 
@@ -95,7 +113,9 @@ exports.createProperty = async (req, res) => {
       title: req.body.title.trim(),
       description: req.body.description || null,
       property_type: req.body.property_type,
-      location_text: req.body.location_text,
+      location_text,
+      latitude,
+      longitude,
       monthly_rent,
       security_deposit,
       bedrooms,
@@ -121,6 +141,11 @@ exports.createProperty = async (req, res) => {
       success: true,
       message: "Property created successfully",
       propertyId: id,
+      location: {
+        location_text,
+        latitude,
+        longitude,
+      },
     });
   } catch (err) {
     console.error("Error creating property:", err);

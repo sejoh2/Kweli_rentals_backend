@@ -7,6 +7,7 @@ async function updatePropertyCount(ownerId) {
 
 async function createProperty(property, mediaUrls, amenities) {
   const client = await pool.connect();
+
   try {
     await client.query("BEGIN");
 
@@ -18,6 +19,8 @@ async function createProperty(property, mediaUrls, amenities) {
         description,
         property_type,
         location_text,
+        latitude,
+        longitude,
         monthly_rent,
         security_deposit,
         bedrooms,
@@ -25,7 +28,7 @@ async function createProperty(property, mediaUrls, amenities) {
         size_sqm,
         furnished
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id
       `,
       [
@@ -34,6 +37,8 @@ async function createProperty(property, mediaUrls, amenities) {
         property.description,
         property.property_type,
         property.location_text,
+        property.latitude,
+        property.longitude,
         property.monthly_rent,
         property.security_deposit,
         property.bedrooms,
@@ -45,7 +50,6 @@ async function createProperty(property, mediaUrls, amenities) {
 
     const propertyId = result.rows[0].id;
 
-    // insert media if any
     if (mediaUrls && mediaUrls.length > 0) {
       for (const url of mediaUrls) {
         await client.query(
@@ -56,13 +60,12 @@ async function createProperty(property, mediaUrls, amenities) {
           [
             propertyId,
             url,
-            url.includes(".mp4") || url.includes(".mov") ? "video" : "image"
+            url.includes(".mp4") || url.includes(".mov") ? "video" : "image",
           ]
         );
       }
     }
 
-    // insert amenities if any
     if (amenities && amenities.length > 0) {
       for (const name of amenities) {
         await client.query(
@@ -76,17 +79,15 @@ async function createProperty(property, mediaUrls, amenities) {
     }
 
     await client.query("COMMIT");
-    
-    // Update landlord's total listings count
+
     await updatePropertyCount(property.owner_id);
 
     return propertyId;
-
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
   } finally {
-    client.release(); // Always release the client back to the pool
+    client.release();
   }
 }
 
@@ -125,7 +126,7 @@ async function getPropertyById(propertyId) {
     `,
     [propertyId]
   );
-  
+
   return result.rows[0];
 }
 
@@ -158,43 +159,46 @@ async function getAllProperties(filters = {}) {
     LEFT JOIN property_amenities pa ON p.id = pa.property_id
     WHERE 1=1
   `;
-  
+
   const values = [];
   let paramIndex = 1;
-  
+
   if (filters.status) {
     query += ` AND p.status = $${paramIndex}`;
     values.push(filters.status);
     paramIndex++;
   }
-  
+
   if (filters.property_type) {
     query += ` AND p.property_type = $${paramIndex}`;
     values.push(filters.property_type);
     paramIndex++;
   }
-  
+
   if (filters.minPrice) {
     query += ` AND p.monthly_rent >= $${paramIndex}`;
     values.push(filters.minPrice);
     paramIndex++;
   }
-  
+
   if (filters.maxPrice) {
     query += ` AND p.monthly_rent <= $${paramIndex}`;
     values.push(filters.maxPrice);
     paramIndex++;
   }
-  
-  query += ` GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating ORDER BY p.created_at DESC`;
-  
+
+  query += `
+    GROUP BY p.id, u.id, u.user_id, u.full_name, u.profile_image_url, u.rating
+    ORDER BY p.created_at DESC
+  `;
+
   const result = await pool.query(query, values);
   return result.rows;
 }
 
-module.exports = { 
-  createProperty, 
-  getPropertyById, 
+module.exports = {
+  createProperty,
+  getPropertyById,
   getAllProperties,
-  updatePropertyCount 
+  updatePropertyCount,
 };
