@@ -9,6 +9,29 @@ const generateUserId = () => {
   return `user_${uuidv4()}`;
 };
 
+const emitLandlordVerificationUpdated = (user, action, reason = null) => {
+  if (!user || user.role !== "landlord") return;
+
+  try {
+    const { getIO } = require("../services/websocket.service");
+
+    getIO().to(`user:${user.user_id}`).emit("landlord_verification_updated", {
+      userId: user.user_id,
+      action,
+      isVerified: action === "approved",
+      verificationStatus: action === "approved" ? "verified" : "not_verified",
+      wasRejected: action === "rejected",
+      rejectionReason: reason,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (socketError) {
+    console.error(
+      "Failed to emit landlord_verification_updated:",
+      socketError.message
+    );
+  }
+};
+
 // Valid roles
 const VALID_ROLES = ['home_finder', 'landlord', 'agent', 'movers'];
 
@@ -552,6 +575,11 @@ const approveVerificationWithDocs = async (req, res) => {
     }
     
     const updated = await userService.updateVerificationStatus(userToVerify.user_id, 'verified');
+
+    emitLandlordVerificationUpdated(
+  { ...userToVerify, is_verified: updated.is_verified, verification_status: updated.verification_status },
+  "approved"
+);
     
     if (notes) {
       const pool = require("../config/db");
@@ -601,7 +629,27 @@ const rejectVerificationWithCleanup = async (req, res) => {
     
     await documentService.deleteAllUserDocuments(userToReject.id, pool);
     
-    const updated = await userService.updateVerificationStatus(userToReject.user_id, 'not_verified');
+    await userService.updateVerificationStatus(userToReject.user_id, 'not_verified');
+
+await pool.query(
+  `UPDATE users 
+   SET was_rejected = true,
+       rejection_reason = $1,
+       rejected_at = NOW(),
+       updated_at = NOW()
+   WHERE user_id = $2`,
+  [reason || 'No reason provided', userToReject.user_id]
+);
+
+const updated = await userService.getUserByUserId(userToReject.user_id);
+
+emitLandlordVerificationUpdated(
+  updated,
+  "rejected",
+  reason || "No reason provided"
+);
+
+
     
     res.json({
       success: true,
@@ -647,6 +695,11 @@ const approveVerification = async (req, res) => {
     }
     
     const updated = await userService.updateVerificationStatus(userId, 'verified');
+
+    emitLandlordVerificationUpdated(
+  { ...userToVerify, is_verified: updated.is_verified, verification_status: updated.verification_status },
+  "approved"
+);
     
     res.json({
       success: true,
@@ -697,6 +750,8 @@ const rejectVerification = async (req, res) => {
     );
     
     const updated = await userService.getUserByUserId(userId);
+
+    emitLandlordVerificationUpdated(updated, "rejected", reason || "No reason provided");
     
     res.json({
       success: true,
