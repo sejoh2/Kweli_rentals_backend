@@ -1,7 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/property.controller");
-const { authenticate, requireRole, optionalAuth } = require("../middleware/auth");
+const {
+  authenticate,
+  requireRole,
+  requireVerifiedAccount,
+  optionalAuth,
+} = require("../middleware/auth");
 
 // Public routes with optional auth, so logged-in users can see is_liked
 router.get("/all", optionalAuth, controller.getAllProperties);
@@ -22,6 +27,7 @@ router.post(
   "/create",
   authenticate,
   requireRole("landlord", "agent"),
+  requireVerifiedAccount,
   controller.uploadMiddleware,
   controller.createProperty
 );

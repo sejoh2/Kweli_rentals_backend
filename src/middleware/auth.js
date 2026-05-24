@@ -86,6 +86,23 @@ const requireRole = (...allowedRoles) => {
   };
 };
 
+const requireVerifiedAccount = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  if (!req.user.is_verified || req.user.verification_status !== "verified") {
+    return res.status(403).json({
+      success: false,
+      error: "Your account must be verified before you can list a property.",
+      verification_status: req.user.verification_status,
+      is_verified: req.user.is_verified,
+    });
+  }
+
+  next();
+};
+
 // Optional auth (doesn't fail if no token)
 const optionalAuth = async (req, res, next) => {
   try {
@@ -112,11 +129,12 @@ const isAdmin = (req) => {
   return req.user && req.user.role === 'admin';
 };
 
-module.exports = { 
-  authenticate, 
-  requireRole, 
-  optionalAuth, 
+module.exports = {
+  authenticate,
+  requireRole,
+  requireVerifiedAccount,
+  optionalAuth,
   isAdmin,
   generateToken,
-  verifyToken
+  verifyToken,
 };
