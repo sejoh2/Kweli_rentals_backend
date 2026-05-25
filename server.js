@@ -1,6 +1,17 @@
 require("dotenv").config();
 
 const app = require("./src/app");
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    status: "ok",
+    service: "kweli-rentals-backend",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 const initTables = require("./src/migrations/initTables");
 const addMessagingTables = require("./src/migrations/addMessagingTables");
 const addMoverTables = require("./src/migrations/addMoverTables");
