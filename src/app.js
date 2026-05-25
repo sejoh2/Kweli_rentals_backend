@@ -21,9 +21,14 @@ app.use("/api/homefinder", homefinderMoverRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date().toISOString() });
+  res.status(200).json({
+    success: true,
+    status: "ok",
+    service: "kweli-rentals-backend",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
 });
-
 app.get("/", (req, res) => {
   res.send("Kweli Rentals Backend is running");
 });
